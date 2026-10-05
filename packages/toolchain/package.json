@@ -1,6 +1,6 @@
 {
   "name": "@a11ign/toolchain",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The one test and build toolchain every a11ign repository shares: the rstest config (node:test shim, run record, verdict line), the Rslib presets, and the TypeScript base.",
   "license": "Apache-2.0",
   "type": "module",
