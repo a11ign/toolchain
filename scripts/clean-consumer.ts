@@ -10,6 +10,8 @@
  *
  * `tsx scripts/clean-consumer.ts` packs THIS tree (build first: `pnpm run consumer-check` does); `tsx scripts/clean-consumer.ts
  * @a11ign/toolchain@0.1.0` installs a PUBLISHED version from the registry instead, which is what a release is accepted against.
+ * `npm pack` runs with `--ignore-scripts`: its `prepack` is a build, which npm 11 lets print to the stdout that `--json` is read from (it did on CI's
+ * runner, and not on the npm that ships with the agent host's Node), and `consumer-check` has built already.
  * Imports of the package are by NAME on purpose: a relative import would resolve inside this repository and prove nothing.
  */
 import assert from "node:assert/strict";
@@ -32,12 +34,12 @@ type Manifest = { version: string; peerDependencies: Record<string, string>; exp
 /** What to install: the spec given on the command line, or a tarball packed from this tree. */
 function whatToInstall(scratch: string, spec: string | undefined): string {
   if (spec) return spec;
-  const [tarball] = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", scratch], PACKAGE_DIR)) as { filename: string }[];
+  const [tarball] = JSON.parse(run("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", scratch], PACKAGE_DIR)) as { filename: string }[];
   return join(scratch, tarball.filename);
 }
 
 function shippedFiles(): string[] {
-  const [pack] = JSON.parse(run("npm", ["pack", "--dry-run", "--json"], PACKAGE_DIR)) as { files: { path: string }[] }[];
+  const [pack] = JSON.parse(run("npm", ["pack", "--ignore-scripts", "--dry-run", "--json"], PACKAGE_DIR)) as { files: { path: string }[] }[];
   return pack.files.map((file) => file.path);
 }
 
