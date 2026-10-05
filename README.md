@@ -9,7 +9,7 @@ It is the template the other repositories copy: TypeScript source, `tsc --noEmit
 
 ```
 packages/toolchain/   the package: src/, rslib.config.ts, tsconfig.base.json
-scripts/              release-plan.mjs (what a push to main means for the release), clean-consumer.ts (the installed-package check)
+scripts/              release-per-merge.mjs (what a push to main means for the release), clean-consumer.ts (the installed-package check)
 rstest.config.ts      this repository's own test config, a call into the built package
 ```
 
