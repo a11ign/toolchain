@@ -1,5 +1,3 @@
-// @ts-check
-
 /**
  * #1318, STEP 2 OF THE RSTEST ADOPTION (#1317): THE SAME FILES `npm run test:ts` RUNS, WITH NONE OF THEM EDITED. Since #3578 (ADR 0043,
  * Decision 3) this is the ONE shared config every a11ign repository calls through `defineToolchainConfig`, parameterised by what differs
@@ -61,22 +59,19 @@ import { fileURLToPath } from "node:url";
 import { availableParallelism } from "node:os";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { FULL_REPORT_FLAG, createVerdictReporter } from "./verdict-reporter.mjs";
+import type { RstestConfig } from "@rstest/core";
+import { FULL_REPORT_FLAG, createVerdictReporter } from "./verdict-reporter.ts";
 
-/**
- * @typedef {Record<string, string | undefined>} Env
- * @typedef {{ root: string, env: Env, now: Date, pid: number }} RunIdentity
- * @typedef {NonNullable<import("@rstest/core").RstestConfig["reporters"]> & unknown[]} Reporters
- */
+type Env = Record<string, string | undefined>;
+type RunIdentity = { root: string; env: Env; now: Date; pid: number };
+type Reporters = NonNullable<RstestConfig["reporters"]> & unknown[];
 
 /**
  * A SIBLING FILE OF THIS ONE, as a path. The hook is loaded by path (`pool.execArgv`), and the same name is right in the source
  * (`src/`) and in the built package (`dist/`), where each entry is a `.mjs`. Made by string, not `new URL("./x", import.meta.url)`:
  * Rslib reads that shape as an asset and copies the file into `dist/static/assets/` instead of leaving it a sibling.
- * @param {string} name
- * @returns {string}
  */
-function siblingPath(name) {
+function siblingPath(name: string): string {
   return join(dirname(fileURLToPath(import.meta.url)), name);
 }
 
@@ -84,19 +79,15 @@ function siblingPath(name) {
  * #1319: whether `CI` names a CI run. GitHub Actions sets `CI=true`. An unset, empty or `false` value is a local run.
  * It decides two settings below: the build cache (on in CI, where #1315 measured no benefit locally) and the worker cap
  * (off in CI, on locally, where the host is shared).
- * @param {Env} env
- * @returns {boolean}
  */
-function isCi(env) {
+function isCi(env: Env): boolean {
   return env.CI !== undefined && env.CI !== "" && env.CI !== "false";
 }
 
 /**
  * #1319: the build cache setting. Off unless CI. When on, `A11Y_RSTEST_CACHE_DIR` moves it out of node_modules.
- * @param {Env} env
- * @returns {false | true | { cacheDirectory: string }}
  */
-function buildCacheFor(env) {
+function buildCacheFor(env: Env): boolean | { cacheDirectory: string } {
   if (!isCi(env)) return false;
   return env.A11Y_RSTEST_CACHE_DIR ? { cacheDirectory: env.A11Y_RSTEST_CACHE_DIR } : true;
 }
@@ -114,10 +105,8 @@ const AGENT_VARIABLES = ["CLAUDECODE", "CLAUDE_CODE", "REPL_ID", "GEMINI_CLI", "
 /**
  * #2199: the console reporter rstest would have picked had this file named none. `RSTEST_NO_AGENT=1` switches the agent
  * report off before anything else is read, exactly as `determineAgent` does.
- * @param {Env} env
- * @returns {"md" | "default"}
  */
-function agentReporterFor(env) {
+function agentReporterFor(env: Env): "md" | "default" {
   if (env.RSTEST_NO_AGENT === "1") return "default";
   return env.AI_AGENT || AGENT_VARIABLES.some((name) => env[name]) ? "md" : "default";
 }
@@ -125,10 +114,8 @@ function agentReporterFor(env) {
 /**
  * #2199: this run's record file, a name no other run shares, and the pruning that keeps the directory bounded. The
  * stamp sorts as time, so the oldest of a worktree's records are the first names in sort order.
- * @param {RunIdentity} run
- * @returns {string}
  */
-function runRecordPathFor({ root, env, now, pid }) {
+function runRecordPathFor({ root, env, now, pid }: RunIdentity): string {
   const dir = env.A11Y_RSTEST_RECORD_DIR || join(root, "node_modules", ".cache", "rstest-run-records");
   const worktree = basename(root);
   if (existsSync(dir)) {
@@ -141,10 +128,8 @@ function runRecordPathFor({ root, env, now, pid }) {
 /**
  * #2541: whether this run's console report is the TRIMMED one -- an agent session, outside CI, that did not ask for the
  * whole report. CI keeps rstest's own markdown preset because what it prints is quoted as evidence.
- * @param {Env} env
- * @returns {boolean}
  */
-function trimsReport(env) {
+function trimsReport(env: Env): boolean {
   return agentReporterFor(env) === "md" && !isCi(env) && !env[FULL_REPORT_FLAG];
 }
 
@@ -154,22 +139,18 @@ function trimsReport(env) {
  * rstest to measure it, of which the suite has dozens -- writes no record unless it was told where, because it is not a
  * session's run and each one would push a real record out of the bounded directory: one whole-suite run would evict the
  * previous fifty, red one included, which is the incident. rstest sets `RSTEST_WORKER_ID` in every worker it forks.
- * @param {RunIdentity} run
- * @returns {Reporters}
  */
-function reportersFor(run) {
+function reportersFor(run: RunIdentity): Reporters {
   const agent = agentReporterFor(run.env) === "md";
   const trimmed = trimsReport(run.env);
-  /** @type {unknown[]} */
-  const console = agent ? [["md", trimmed ? { preset: "compact", candidateFiles: false } : { preset: "normal" }]] : ["default"];
-  /** @type {unknown[]} */
-  const record = run.env.RSTEST_WORKER_ID && !run.env.A11Y_RSTEST_RECORD_DIR ? [] : [["json", { outputPath: runRecordPathFor(run) }]];
+  const console: unknown[] = agent ? [["md", trimmed ? { preset: "compact", candidateFiles: false } : { preset: "normal" }]] : ["default"];
+  const record: unknown[] = run.env.RSTEST_WORKER_ID && !run.env.A11Y_RSTEST_RECORD_DIR ? [] : [["json", { outputPath: runRecordPathFor(run) }]];
   // #3572: `verify` reads the counts of the run it started from here. TOP-LEVEL RUNS ONLY, and under its own name rather than
   // `A11Y_RSTEST_RECORD_DIR`: that variable is the switch that makes a run inside a worker record, and a test that spawns rstest
   // (the suite has dozens) inherited it and left fourteen records beside the one `verify` meant to read.
   const summary = run.env.A11Y_RSTEST_SUMMARY_FILE && !run.env.RSTEST_WORKER_ID ? [["json", { outputPath: run.env.A11Y_RSTEST_SUMMARY_FILE }]] : [];
   const verdict = agent ? [createVerdictReporter({ hint: trimmed ? `full report: ${FULL_REPORT_FLAG}=1` : undefined })] : [];
-  return /** @type {Reporters} */ ([...console, ...record, ...summary, ...verdict]);
+  return [...console, ...record, ...summary, ...verdict] as Reporters;
 }
 
 /**
@@ -197,16 +178,19 @@ const LOCAL_WORKER_CAP = Math.max(1, Math.floor(availableParallelism() / 2));
  * - `preloads`: extra `--import` paths for every worker, after this package's own hook. Each is a PATH, never a bare specifier.
  * - `forceRerunTriggers`: triggers beyond the shared ones that widen a `--changed` run to the whole suite.
  * - `run`: the process environment and identity of this run, injectable so a test can drive the record path without a real run.
- * @typedef {{ root: string, include: string[], preloads?: string[], forceRerunTriggers?: string[],
- *            run?: { env?: Env, now?: Date, pid?: number } }} ToolchainOptions
  */
+export type ToolchainOptions = {
+  root: string;
+  include: string[];
+  preloads?: string[];
+  forceRerunTriggers?: string[];
+  run?: { env?: Env; now?: Date; pid?: number };
+};
 
-/**
- * The one shared rstest config, as a plain object a repository exports.
- * @param {ToolchainOptions} options
- * @returns {import("@rstest/core").RstestConfig}
- */
-export function defineToolchainConfig({ root, include, preloads = [], forceRerunTriggers = [], run = {} }) {
+/** The one shared rstest config, as a plain object a repository exports. */
+export function defineToolchainConfig(
+  { root, include, preloads = [], forceRerunTriggers = [], run = {} }: ToolchainOptions,
+): RstestConfig {
   const env = run.env ?? process.env;
   const registerHook = siblingPath("register-node-test-alias.mjs");
   return {

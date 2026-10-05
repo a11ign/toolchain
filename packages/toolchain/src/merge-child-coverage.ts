@@ -1,5 +1,3 @@
-// @ts-check
-
 /**
  * #1350, rstest adoption F2 (BLOCKER), under #1317: COVERAGE OF SCRIPTS THE SUITE RUNS AS CHILD PROCESSES.
  *
@@ -48,31 +46,43 @@ import { CoverageProvider } from "@rstest/coverage-v8";
  * that type reaches `@rstest/coverage-v8`'s own `.d.ts`, which imports `istanbul-lib-coverage` types the package lists only as a
  * devDependency, so a consumer with `skipLibCheck: false` failed TS7016 inside a package it did not write (measured in a clean
  * consumer, #3578). `CoverageProvider` is still a runtime import; it just no longer shows in the published declarations.
- * @typedef {{ getCoverageSummary(): { toJSON(): Record<"lines" | "statements" | "functions" | "branches",
- *   { covered: number, total: number, pct: number }> }, merge(other: unknown): void, toJSON(): unknown, files(): string[],
- *   fileCoverageFor(file: string): { toJSON(): unknown } }} CoverageMap
  */
-/** @typedef {{ include: string[], exclude: string[] }} C8Population */
-/** @typedef {{ url: string, filePath: string, functions: unknown[], scriptId?: string }} ChildEntry */
+export type CoverageMap = {
+  getCoverageSummary(): { toJSON(): Record<"lines" | "statements" | "functions" | "branches", { covered: number; total: number; pct: number }> };
+  merge(other: unknown): void;
+  toJSON(): unknown;
+  files(): string[];
+  fileCoverageFor(file: string): { toJSON(): unknown };
+};
+export type C8Population = { include: string[]; exclude: string[] };
+export type ChildEntry = { url: string; filePath: string; functions: unknown[]; scriptId?: string };
+
+/** The options this file hands rstest's coverage provider, by name: the provider's own option type is not published in our declarations. */
+export type CoverageOptions = {
+  enabled: true;
+  provider: "v8";
+  include: string[];
+  exclude: string[];
+  reporters: string[];
+  reportsDirectory: string;
+  clean: true;
+  allowExternal: false;
+  reportOnFailure: true;
+};
 
 /**
  * rstest's coverage options for `.c8rc.json`'s own population -- read, never retyped. `reportOnFailure`, because the
  * suite has a host-dependent failure (no Chrome) and a coverage report is still the answer to a coverage question.
- * @param {C8Population} c8rc @param {string} reportsDirectory
  */
-export function coverageOptionsFromC8rc(c8rc, reportsDirectory) {
+export function coverageOptionsFromC8rc(c8rc: C8Population, reportsDirectory: string): CoverageOptions {
   return {
-    enabled: true, provider: /** @type {"v8"} */ ("v8"), include: [...c8rc.include], exclude: [...c8rc.exclude],
+    enabled: true, provider: "v8", include: [...c8rc.include], exclude: [...c8rc.exclude],
     reporters: ["json"], reportsDirectory, clean: true, allowExternal: false, reportOnFailure: true,
   };
 }
 
-/**
- * The same options as `rstest run` flags. Include and exclude REPEAT, one flag per pattern.
- * @param {ReturnType<typeof coverageOptionsFromC8rc>} options
- * @returns {string[]}
- */
-export function rstestCoverageArgs(options) {
+/** The same options as `rstest run` flags. Include and exclude REPEAT, one flag per pattern. */
+export function rstestCoverageArgs(options: CoverageOptions): string[] {
   return [
     "--coverage", "--coverage.provider", options.provider,
     ...options.include.flatMap((pattern) => ["--coverage.include", pattern]),
@@ -86,22 +96,18 @@ export function rstestCoverageArgs(options) {
 /**
  * `root` itself or a path BENEATH it -- never a sibling that shares the prefix (reviewer on #1403: `/repo-other/x.mjs`
  * starts with `/repo` and is not inside it). The boundary is a path separator.
- * @param {string} filePath @param {string} root
  */
-const isInside = (filePath, root) => filePath.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+const isInside = (filePath: string, root: string): boolean => filePath.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 
 /**
  * Every repo script a child ran, from `NODE_V8_COVERAGE`'s raw files, as the provider's entries. Only `file:` URLs
  * under `root` and outside `node_modules`; a query string (`?fresh-import=...`) is not part of the path.
- * @param {string} rawDir @param {string} root
- * @returns {ChildEntry[]}
  */
-export function childCoverageEntries(rawDir, root) {
-  /** @type {ChildEntry[]} */
-  const entries = [];
+export function childCoverageEntries(rawDir: string, root: string): ChildEntry[] {
+  const entries: ChildEntry[] = [];
   for (const name of readdirSync(rawDir).filter((file) => file.endsWith(".json"))) {
     const { result = [] } = JSON.parse(readFileSync(join(rawDir, name), "utf8"));
-    for (const script of /** @type {{ url: string, functions: unknown[] }[]} */ (result)) {
+    for (const script of result as { url: string; functions: unknown[] }[]) {
       if (!script.url.startsWith("file:")) continue;
       const filePath = fileURLToPath(script.url.split("?")[0]);
       if (!isInside(filePath, root) || filePath.includes(`${sep}node_modules${sep}`)) continue;
@@ -111,21 +117,23 @@ export function childCoverageEntries(rawDir, root) {
   return entries;
 }
 
-/**
-/** @typedef {{ start: { line: number, column: number | null } }} Located */
-/**
- * @typedef {{ statementMap: Record<string, Located>, s: Record<string, number>,
- *             fnMap: Record<string, { decl: Located, loc: Located }>, f: Record<string, number>,
- *             branchMap: Record<string, { loc: Located, locations: unknown[] }>, b: Record<string, number[]> }} FileData
- */
+type Located = { start: { line: number; column: number | null } };
+/** One file's istanbul coverage data: the statement, function and branch maps and their hit counts. */
+export type FileData = {
+  statementMap: Record<string, Located>;
+  s: Record<string, number>;
+  fnMap: Record<string, { decl: Located; loc: Located }>;
+  f: Record<string, number>;
+  branchMap: Record<string, { loc: Located; locations: unknown[] }>;
+  b: Record<string, number[]>;
+};
 
-/** A structure's start, as a key. @param {Located} located */
-const startOf = (located) => `${located.start.line}:${located.start.column}`;
+/** A structure's start, as a key. */
+const startOf = (located: Located): string => `${located.start.line}:${located.start.column}`;
 
-/** The first id at each start. @param {Record<string, Located>} map */
-function idsByStart(map) {
-  /** @type {Map<string, string>} */
-  const byStart = new Map();
+/** The first id at each start. */
+function idsByStart(map: Record<string, Located>): Map<string, string> {
+  const byStart = new Map<string, string>();
   for (const [id, located] of Object.entries(map)) if (!byStart.has(startOf(located))) byStart.set(startOf(located), id);
   return byStart;
 }
@@ -134,11 +142,10 @@ function idsByStart(map) {
  * ONE FILE: the child's hits added onto rstest's OWN statement, function and branch maps, matched by START position.
  * The base's maps are kept whole, so no denominator moves; a child structure with no base structure at its start
  * (or a branch with a different arm count) is counted in `unmatched`, not added. Pure: neither input is modified.
- * @param {FileData} base rstest's entry @param {FileData} child the converted child coverage of the same file
- * @returns {{ data: FileData, unmatched: { statements: number, functions: number, branches: number } }}
+ * `base` is rstest's entry and `child` the converted child coverage of the same file.
  */
-export function foldByStart(base, child) {
-  const data = /** @type {FileData} */ (structuredClone(base));
+export function foldByStart(base: FileData, child: FileData): { data: FileData; unmatched: Unmatched } {
+  const data = structuredClone(base);
   const unmatched = { statements: 0, functions: 0, branches: 0 };
   const statementAt = idsByStart(data.statementMap);
   for (const [id, located] of Object.entries(child.statementMap)) {
@@ -159,41 +166,43 @@ export function foldByStart(base, child) {
   return { data, unmatched };
 }
 
+/** How many child structures found no base structure at their start, by kind. */
+export type Unmatched = { statements: number; functions: number; branches: number };
+
 /**
  * THE MERGE: rstest's report, with what children covered converted by rstest's own provider (under the options that
  * built the report) and FOLDED onto each file's existing entry by `foldByStart`. A child file the report does not list
  * has no entry to fold onto and adds nothing, so the report's population and every denominator are unchanged.
- * @param {{ report: Record<string, FileData>, entries: ChildEntry[], options: ReturnType<typeof coverageOptionsFromC8rc>,
- *           root: string }} input
- * @returns {Promise<{ merged: CoverageMap, childFiles: string[], unmatched: { statements: number, functions: number,
- *           branches: number } }>}
  */
-export async function mergeChildCoverage({ report, entries, options, root }) {
-  const provider = new CoverageProvider(/** @type {any} */ (options), root);
+export async function mergeChildCoverage(
+  { report, entries, options, root }: { report: Record<string, FileData>; entries: ChildEntry[]; options: CoverageOptions; root: string },
+): Promise<{ merged: CoverageMap; childFiles: string[]; unmatched: Unmatched }> {
+  const provider = new CoverageProvider(options as never, root);
   const children = entries.length > 0 ? await provider.resolveRawCoverage([{ entries, root }]) : null;
   // A CLONE, not a spread: istanbul's `CoverageMap.merge` keeps the object it is given BY REFERENCE and later merges
   // rewrite it in place. Measured on #1350: a second map merged onto the caller's entry changed the caller's own
   // `s` from 4 statements to 8, and a test reading its expectation after the call agreed with the mutated value.
-  const folded = /** @type {Record<string, FileData>} */ (structuredClone(report));
-  const childFiles = [];
+  const folded = structuredClone(report);
+  const childFiles: string[] = [];
   const unmatched = { statements: 0, functions: 0, branches: 0 };
   for (const file of children?.files() ?? []) {
     if (!(file in report)) continue;
-    const result = foldByStart(folded[file], /** @type {any} */ (children).fileCoverageFor(file).toJSON());
+    const result = foldByStart(folded[file], children!.fileCoverageFor(file).toJSON() as FileData);
     folded[file] = result.data;
     childFiles.push(file);
-    for (const kind of /** @type {const} */ (["statements", "functions", "branches"])) unmatched[kind] += result.unmatched[kind];
+    for (const kind of ["statements", "functions", "branches"] as const) unmatched[kind] += result.unmatched[kind];
   }
   const merged = provider.createCoverageMap();
-  merged.merge(/** @type {any} */ (folded));
+  merged.merge(folded as never);
   return { merged, childFiles, unmatched };
 }
 
-/** Lines, statements, functions and branches for a map, in rstest's units. @param {CoverageMap} map */
-export function coverageTotals(map) {
+type Metric = { covered: number; total: number; pct: number };
+
+/** Lines, statements, functions and branches for a map, in rstest's units. */
+export function coverageTotals(map: CoverageMap): Record<"lines" | "statements" | "functions" | "branches", Metric> {
   const summary = map.getCoverageSummary().toJSON();
-  /** @param {{ covered: number, total: number, pct: number }} metric */
-  const pick = ({ covered, total, pct }) => ({ covered, total, pct });
+  const pick = ({ covered, total, pct }: Metric): Metric => ({ covered, total, pct });
   return { lines: pick(summary.lines), statements: pick(summary.statements), functions: pick(summary.functions),
     branches: pick(summary.branches) };
 }
@@ -203,16 +212,14 @@ export function coverageTotals(map) {
  * `population` is `.c8rc.json`'s parsed `include` and `exclude`; `rstest` is the command and the arguments BEFORE the coverage
  * flags, e.g. `pnpm exec rstest run --config <path>` (#492: a bare "pnpm" spawn is ENOENT on windows-2022, so the repository
  * resolves it).
- * @typedef {{ root: string, population: C8Population, rstest: { command: string, args: string[] } }} ChildCoverageRun
  */
+export type ChildCoverageRun = { root: string; population: C8Population; rstest: { command: string; args: string[] } };
 
 /**
  * The whole run: rstest under coverage with `NODE_V8_COVERAGE` set, the children's coverage folded in, the merged report
  * written beside rstest's own as `coverage-final.merged.json`. Returns rstest's own exit status, or 2 when it wrote no report.
- * @param {ChildCoverageRun} run
- * @returns {Promise<number>}
  */
-export async function runChildCoverage({ root, population, rstest }) {
+export async function runChildCoverage({ root, population, rstest }: ChildCoverageRun): Promise<number> {
   const reportsDirectory = join(root, "coverage", "rstest");
   const options = coverageOptionsFromC8rc(population, reportsDirectory);
   const rawDir = realpathSync(mkdtempSync(join(tmpdir(), "rstest-child-coverage-")));
@@ -224,7 +231,7 @@ export async function runChildCoverage({ root, population, rstest }) {
     return 2;
   }
   const report = JSON.parse(readFileSync(reportPath, "utf8"));
-  const alone = new CoverageProvider(/** @type {any} */ (options), root).createCoverageMap();
+  const alone = new CoverageProvider(options as never, root).createCoverageMap();
   alone.merge(report);
   const before = coverageTotals(alone);
   const { merged, childFiles, unmatched } = await mergeChildCoverage(

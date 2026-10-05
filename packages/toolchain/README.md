@@ -1,9 +1,9 @@
 # `@a11ign/toolchain`
 
-The one test and build toolchain every a11ign repository shares ([ADR 0043](../../docs/adr/0043-one-toolchain-for-every-repository.md)):
+The one test and build toolchain every a11ign repository shares ([ADR 0043](https://github.com/a11ign/a11ign/blob/main/docs/adr/0043-one-toolchain-for-every-repository.md)):
 the rstest config as a function of what differs per repository, the `node:test` shim that lets an existing suite run on rstest unedited, the run
 record and verdict line, the Rslib presets, and the TypeScript base. It is a package and not a template because the config is eight recorded
-decisions (the header of `src/rstest-config.mjs`), and five copies would drift.
+decisions (the header of `src/rstest-config.ts`), and five copies would drift.
 
 Install it as a `devDependency` beside its peers: `@rstest/core` (`^0.12.3`), and `@rslib/core` (`^1.0.3`) if the repository builds. `@rstest/coverage-v8`
 is an optional peer, for `merge-child-coverage` only.
@@ -49,7 +49,21 @@ One entry per `exports` key, derived from the package's own `exports` map by `en
 
 `strict`, NodeNext, `declaration`; `declarationMap` and `sourceMap` off for a published package; no `composite`, `outDir` or `rootDir`.
 
-## Building this package
+## Building and checking this package
 
-`rslib build`, from its own directory. Its config imports `./src/rslib-presets.ts` by relative path and never its own `dist`, so it builds from a fresh clone before
-any consumer does.
+Everything runs from the repository root (`pnpm install` first):
+
+| command | what it does |
+|---|---|
+| `pnpm run build` | `rslib build`: one `.mjs` and one `.d.ts` per `exports` key into `packages/toolchain/dist`. Its config imports `./src/rslib-presets.ts` by relative path and never its own `dist`, so it builds from a fresh clone. |
+| `pnpm run typecheck` | `tsc --noEmit` over every `.ts` in the repository, tests included (builds first: the repository's own `rstest.config.ts` imports the built package). |
+| `pnpm run lint` | ESLint, the Clean Code limits. |
+| `pnpm test` | `rstest run` on this repository's own config, which is `defineToolchainConfig` from the BUILT package. |
+| `pnpm run consumer-check` | packs the tarball, installs it into an empty project, imports every `exports` specifier, runs a consumer `tsc` with `skipLibCheck` false, and runs `rstest run` on a one-test project, which must print `VERDICT pass`. `pnpm exec tsx scripts/clean-consumer.ts @a11ign/toolchain@<version>` does the same against a published version. |
+
+CI's one required job, `gate`, runs all five. A release is a changeset (`pnpm exec changeset`), the **Version packages** pull request `release.yml` opens
+for it, and that pull request's merge, which publishes with npm trusted publishing (OIDC) and provenance: no token is stored anywhere.
+
+## Licence
+
+`Apache-2.0`. A test and build config that every repository imports must not pass copyleft terms to its importers.

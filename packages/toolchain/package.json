@@ -1,28 +1,28 @@
 {
   "name": "@a11ign/toolchain",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "The one test and build toolchain every a11ign repository shares: the rstest config (node:test shim, run record, verdict line), the Rslib presets, and the TypeScript base.",
-  "license": "AGPL-3.0-or-later",
+  "license": "Apache-2.0",
   "type": "module",
   "exports": {
     "./rstest-config": {
-      "types": "./dist/rstest-config.d.mts",
+      "types": "./dist/rstest-config.d.ts",
       "default": "./dist/rstest-config.mjs"
     },
     "./verdict-reporter": {
-      "types": "./dist/verdict-reporter.d.mts",
+      "types": "./dist/verdict-reporter.d.ts",
       "default": "./dist/verdict-reporter.mjs"
     },
     "./node-test-shim": {
-      "types": "./dist/node-test-shim.d.mts",
+      "types": "./dist/node-test-shim.d.ts",
       "default": "./dist/node-test-shim.mjs"
     },
     "./register-node-test-alias": {
-      "types": "./dist/register-node-test-alias.d.mts",
+      "types": "./dist/register-node-test-alias.d.ts",
       "default": "./dist/register-node-test-alias.mjs"
     },
     "./merge-child-coverage": {
-      "types": "./dist/merge-child-coverage.d.mts",
+      "types": "./dist/merge-child-coverage.d.ts",
       "default": "./dist/merge-child-coverage.mjs"
     },
     "./entries": {
@@ -63,10 +63,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/a11ign/a11ign.git",
+    "url": "git+https://github.com/a11ign/toolchain.git",
     "directory": "packages/toolchain"
   },
-  "homepage": "https://github.com/a11ign/a11ign",
+  "homepage": "https://github.com/a11ign/toolchain",
   "keywords": [
     "rstest",
     "rslib",

@@ -1,5 +1,3 @@
-// @ts-check
-
 /**
  * #2541: THE LAST LINE OF AN AGENT SESSION'S RSTEST REPORT, NAMING WHAT RAN AND REFUSING ZERO.
  *
@@ -20,17 +18,15 @@
 /** The variable that gives an agent session rstest's full markdown report again. Named in the verdict line it trims for. */
 export const FULL_REPORT_FLAG = "A11Y_RSTEST_FULL_REPORT";
 
-/** @param {number} count @param {string} noun */
-const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
-/**
- * @typedef {{ status: string }} Outcome
- * @param {{ results: Outcome[], testResults: Outcome[], unhandledErrors?: unknown[] }} run rstest's `onTestRunEnd` arguments
- * @returns {string} one line, starting `VERDICT`, without the hint
- */
-export function verdictLine({ results, testResults, unhandledErrors = [] }) {
-  /** @param {string} status */
-  const count = (status) => testResults.filter((test) => test.status === status).length;
+export type Outcome = { status: string };
+/** rstest's `onTestRunEnd` arguments, reduced to what the verdict reads. */
+export type RunEnd = { results: Outcome[]; testResults: Outcome[]; unhandledErrors?: unknown[] };
+
+/** One line, starting `VERDICT`, without the hint. */
+export function verdictLine({ results, testResults, unhandledErrors = [] }: RunEnd): string {
+  const count = (status: string): number => testResults.filter((test) => test.status === status).length;
   const failed = count("fail");
   const ran = failed + count("pass");
   const failedFiles = results.filter((file) => file.status === "fail").length;
@@ -46,14 +42,20 @@ export function verdictLine({ results, testResults, unhandledErrors = [] }) {
   return `VERDICT pass: ${plural(ran, "test")} in ${files}${skipped > 0 ? ` (${skipped} skipped)` : ""}`;
 }
 
+export type VerdictReporterOptions = {
+  /** Appended to the line, for a report that was trimmed. */
+  hint?: string;
+  write?: (text: string) => void;
+};
+
 /**
  * A reporter that prints the verdict line and nothing else. It must be the LAST reporter in the list: rstest awaits
  * each reporter's `onTestRunEnd` in order, so the line lands after the report and after the json reporter's
  * "JSON report written to" line.
- * @param {{ hint?: string, write?: (text: string) => void }} [options] `hint` is appended to the line, for a report that was trimmed
- * @returns {{ onTestRunEnd: (run: { results: Outcome[], testResults: Outcome[], unhandledErrors?: unknown[] }) => void }}
  */
-export function createVerdictReporter({ hint, write = (text) => process.stdout.write(text) } = {}) {
+export function createVerdictReporter(
+  { hint, write = (text) => process.stdout.write(text) }: VerdictReporterOptions = {},
+): { onTestRunEnd: (run: RunEnd) => void } {
   return {
     onTestRunEnd(run) {
       write(`${verdictLine(run)}${hint ? ` -- ${hint}` : ""}\n`);

@@ -1,5 +1,3 @@
-// @ts-check
-
 /**
  * #1318: THE SUITE IMPORTS `node:test`; RSTEST HAS ITS OWN API. This module stands between them. It is sent in
  * for `node:test` by `register-node-test-alias.mjs`, in every rstest worker, so no test file is edited.
@@ -28,24 +26,22 @@ import * as rstestModule from "@rstest/core";
 /**
  * node:test's call shapes are loose (`test(name, fn)`, `test(name, options, fn)`, `test(fn)`), so this module
  * handles them as values it inspects rather than as fixed types.
- * @typedef {any} Loose
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shape of a node:test call is the thing being adapted, see above
+type Loose = any;
 
-/** @type {Loose} */
-const api = /** @type {Loose} */ (globalThis).test ? globalThis : rstestModule;
+const api: Loose = (globalThis as Loose).test ? globalThis : rstestModule;
 
 /**
  * The `t` node:test hands a test function, reduced to what rstest can honour without pretending.
- * @param {string} name @param {Loose} ctx rstest's per-test context
+ * `ctx` is rstest's per-test context.
  */
-function contextFor(name, ctx) {
+function contextFor(name: string, ctx: Loose): Loose {
   return {
     name,
     signal: ctx?.signal,
-    /** @param {string} message */
-    diagnostic: (message) => { process.stdout.write(`# ${message}\n`); },
-    /** @param {string} [reason] */
-    skip: (reason) => {
+    diagnostic: (message: string) => { process.stdout.write(`# ${message}\n`); },
+    skip: (reason?: string) => {
       if (typeof ctx?.skip === "function") return ctx.skip(reason);
       throw new Error(`node-test-shim: t.skip() has no rstest context to call (${name})`);
     },
@@ -54,16 +50,15 @@ function contextFor(name, ctx) {
 }
 
 /** The `test()` options this shim maps onto rstest. Every other key is refused by name, never dropped (#1383). */
-export const MAPPED_TEST_OPTIONS = Object.freeze(["skip", "todo", "timeout"]);
+export const MAPPED_TEST_OPTIONS: readonly string[] = Object.freeze(["skip", "todo", "timeout"]);
 
-/** @param {string} what */
-const refusal = (what) => new Error(`node-test-shim: node:test's \`${what}\` is not mapped onto rstest`);
+const refusal = (what: string): Error => new Error(`node-test-shim: node:test's \`${what}\` is not mapped onto rstest`);
 
 /**
  * The keys of an options object this shim does not map, as one refusal naming each -- or nothing to refuse.
- * @param {string} call `test` or `describe` @param {Record<string, unknown>} options @param {readonly string[]} mapped
+ * `call` is `test` or `describe`.
  */
-function refuseUnmapped(call, options, mapped) {
+function refuseUnmapped(call: string, options: Record<string, unknown>, mapped: readonly string[]): void {
   const unmapped = Object.keys(options).filter((key) => !mapped.includes(key));
   if (unmapped.length > 0) throw refusal(`${call}() option ${unmapped.map((key) => `"${key}"`).join(", ")}`);
 }
@@ -72,25 +67,22 @@ function refuseUnmapped(call, options, mapped) {
  * node:test's `test(name, fn)`, `test(name, options, fn)` and `test(fn)`, registered with rstest.
  * Options mapped: `skip`, `todo`, `timeout`. Any other key -- `concurrency`, `only`, `plan`, or one node:test adds
  * later -- is REFUSED by name at registration, because dropping it silently changes what the test does (#1383).
- * EXPORTED with `register` injected, so the refusal is driven without rstest's runtime.
- * @param {Loose} register rstest's `test` (or `test.only`)
+ * EXPORTED with `register` injected, so the refusal is driven without rstest's runtime. `register` is rstest's `test` (or `test.only`).
  */
-export function adapt(register) {
-  /** @param {Loose} nameOrFn @param {Loose} [optionsOrFn] @param {Loose} [maybeFn] */
+export function adapt(register: Loose): (nameOrFn: Loose, optionsOrFn?: Loose, maybeFn?: Loose) => Loose {
   return (nameOrFn, optionsOrFn, maybeFn) => {
     const name = typeof nameOrFn === "string" ? nameOrFn : (nameOrFn?.name || "<anonymous>");
     const fn = [nameOrFn, optionsOrFn, maybeFn].find((part) => typeof part === "function");
     const options = typeof optionsOrFn === "object" && optionsOrFn !== null ? optionsOrFn : {};
     refuseUnmapped("test", options, MAPPED_TEST_OPTIONS);
-    const body = fn ? (/** @type {Loose} */ ctx) => fn(contextFor(name, ctx)) : () => {};
+    const body = fn ? (ctx: Loose) => fn(contextFor(name, ctx)) : () => {};
     if (options.skip) return register.skip(name, body);
     if (options.todo) return register.todo(name, body);
     return register(name, body, options.timeout);
   };
 }
 
-/** @param {string} what @returns {Loose} */
-const refused = (what) => new Proxy(function refusedNodeTestApi() {}, {
+const refused = (what: string): Loose => new Proxy(function refusedNodeTestApi() {}, {
   get: (_target, prop) => {
     if (typeof prop === "symbol") return undefined;
     if (prop === "name") return what;
@@ -102,11 +94,10 @@ const refused = (what) => new Proxy(function refusedNodeTestApi() {}, {
 /**
  * node:test's `describe(name, fn)` and `describe(name, options, fn)`, registered with rstest's `describe`. NO
  * describe option is mapped, so every key is refused by name (#1383): a dropped `{ skip: true }` ran the whole suite
- * where node:test skips it. An empty options object has nothing to refuse. EXPORTED with the api injected.
- * @param {Loose} registerApi the object whose `describe` registers the suite
+ * where node:test skips it. An empty options object has nothing to refuse. EXPORTED with the api injected: `registerApi` is the
+ * object whose `describe` registers the suite.
  */
-export function describeOn(registerApi) {
-  /** @param {string} name @param {Loose} optionsOrFn @param {Loose} [maybeFn] */
+export function describeOn(registerApi: Loose): (name: string, optionsOrFn: Loose, maybeFn?: Loose) => Loose {
   return (name, optionsOrFn, maybeFn) => {
     if (typeof optionsOrFn === "object" && optionsOrFn !== null) refuseUnmapped("describe", optionsOrFn, []);
     return registerApi.describe(name, typeof optionsOrFn === "function" ? optionsOrFn : maybeFn);
@@ -114,17 +105,13 @@ export function describeOn(registerApi) {
 }
 
 export const describe = describeOn(api);
-/** @param {() => unknown} fn */
-export const before = (fn) => api.beforeAll(fn);
-/** @param {() => unknown} fn */
-export const after = (fn) => api.afterAll(fn);
-/** @param {() => unknown} fn */
-export const beforeEach = (fn) => api.beforeEach(fn);
-/** @param {() => unknown} fn */
-export const afterEach = (fn) => api.afterEach(fn);
+export const before = (fn: () => unknown): unknown => api.beforeAll(fn);
+export const after = (fn: () => unknown): unknown => api.afterAll(fn);
+export const beforeEach = (fn: () => unknown): unknown => api.beforeEach(fn);
+export const afterEach = (fn: () => unknown): unknown => api.afterEach(fn);
 
-/** @returns {Loose} rstest's mock utilities, global `rs` (or `rstest`) under `globals: true` */
-const rs = () => api.rs ?? api.rstest;
+/** rstest's mock utilities, global `rs` (or `rstest`) under `globals: true`. */
+const rs = (): Loose => api.rs ?? api.rstest;
 
 /**
  * An rstest spy whose `mock` also answers node:test's `callCount()`.
@@ -135,9 +122,8 @@ const rs = () => api.rs ?? api.rstest;
  * property cannot be redefined either, so the spy is returned behind a Proxy: calls and every other property
  * reach the real spy untouched, and a read of `mock` gets the state with `callCount` counting the spy's own
  * calls at the moment it is asked.
- * @param {Loose} spy
  */
-function withNodeTestAccessors(spy) {
+function withNodeTestAccessors(spy: Loose): Loose {
   return new Proxy(spy, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target);
@@ -147,19 +133,15 @@ function withNodeTestAccessors(spy) {
   });
 }
 
-/** @type {Record<string, (...args: Loose[]) => Loose>} */
-const mapped = {
-  /** @param {Loose} [impl] */
-  fn: (impl) => withNodeTestAccessors(rs().fn(impl)),
-  /** @param {Loose} object @param {string} methodName @param {Loose} [impl] */
-  method: (object, methodName, impl) => {
+const mapped: Record<string, (...args: Loose[]) => Loose> = {
+  fn: (impl?: Loose) => withNodeTestAccessors(rs().fn(impl)),
+  method: (object: Loose, methodName: string, impl?: Loose) => {
     const spy = rs().spyOn(object, methodName);
     return withNodeTestAccessors(impl ? spy.mockImplementation(impl) : spy);
   },
 };
 
-/** @type {Loose} */
-export const mock = new Proxy(mapped, {
+export const mock: Loose = new Proxy(mapped, {
   get: (target, prop) => {
     if (typeof prop === "symbol") return undefined;
     if (prop in target) return target[prop];
@@ -169,13 +151,10 @@ export const mock = new Proxy(mapped, {
 export const run = refused("run");
 
 const base = adapt(api.test);
-/** @type {Loose} */
-export const test = Object.assign(base, {
+export const test: Loose = Object.assign(base, {
   after, afterEach, before, beforeEach, describe, mock, run,
-  /** @param {string} name @param {Loose} [optionsOrFn] @param {Loose} [maybeFn] */
-  skip: (name, optionsOrFn, maybeFn) => base(name, { skip: true }, [optionsOrFn, maybeFn].find((f) => typeof f === "function")),
-  /** @param {string} name @param {Loose} [optionsOrFn] @param {Loose} [maybeFn] */
-  todo: (name, optionsOrFn, maybeFn) => base(name, { todo: true }, [optionsOrFn, maybeFn].find((f) => typeof f === "function")),
+  skip: (name: string, optionsOrFn?: Loose, maybeFn?: Loose) => base(name, { skip: true }, [optionsOrFn, maybeFn].find((f) => typeof f === "function")),
+  todo: (name: string, optionsOrFn?: Loose, maybeFn?: Loose) => base(name, { todo: true }, [optionsOrFn, maybeFn].find((f) => typeof f === "function")),
   only: adapt(api.test.only ?? api.test),
 });
 export const it = test;

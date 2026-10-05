@@ -1,5 +1,3 @@
-// @ts-check
-
 /**
  * #1318: WHERE `node:test` IS REDIRECTED, AND WHY HERE.
  *
