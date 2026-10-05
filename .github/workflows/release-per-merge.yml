@@ -1,0 +1,294 @@
+# ONE PER-MERGE RELEASE WORKFLOW, FOR EVERY REPOSITORY (chairman's CI/CD direction, a11ign/a11ign#928; row a11ign/a11ign#3712).
+# A push to `main` whose tree carries a changeset no tag has consumed is versioned on a DETACHED COMMIT, published by OIDC where the
+# package publishes, tagged and released. THERE IS NO VERSION PULL REQUEST, and `main` IS NEVER WRITTEN: its own versions and changelogs lag
+# the last tag, and nothing reads them. `scripts/release-per-merge.mjs` holds the version logic and `scripts/release-per-merge.test.ts` runs it.
+#
+# A CALLER is one job, in a file of its own that keeps the name its npm trusted-publisher entry gives (see the OIDC note below):
+#
+#   on: { push: { branches: [main] } }
+#   jobs:
+#     release:
+#       needs: [<the caller's own guards>]        # WHAT a repository checks before it publishes is the caller's, never this file's
+#       permissions: { contents: write, checks: read, id-token: write }    # a called workflow can only keep or reduce these
+#       concurrency: { group: release, cancel-in-progress: false }
+#       uses: a11ign/toolchain/.github/workflows/release-per-merge.yml@<full sha>
+#       with: { kind: npm, gate-check: gate }
+#
+# THE ORDER, AND WHY EACH JOB HOLDS WHAT IT HOLDS:
+#   gate     the repository's `gate` check must have SUCCEEDED on this exact sha, read and waited for, never re-run. Holds `checks: read` only.
+#   version  builds the release commit (the last tags' versions and changelogs, the released changesets removed, then `changeset version`).
+#            `contents: read` and no stored credential, because it RUNS THE CALLER'S CODE (`pnpm install`); the commit leaves as a git bundle.
+#   publish  kind `npm` only. The ONLY job with `id-token: write`, in the `npm-publish` environment (restricted to `main`), from the release commit.
+#            Before the tags, so a failure leaves the registry ahead of the tags and a re-run recomputes the same release: `changeset publish`
+#            skips a version the registry already has. The other order leaves a tag for a version that never published and nothing to re-run from.
+#   tag      the tags and the GitHub Releases. The ONLY job with `contents: write`, and it runs no caller code: it fetches the bundle, pushes
+#            tags (never a branch, never forced, one atomic push) and reads CHANGELOG.md.
+#
+# ONE TAG PER PACKAGE, as changesets names them: `name@x.y.z`, or `vx.y.z` for the lone package at the repository root. A private package is
+# versioned and tagged by neither (`privatePackages: { version: false, tag: false }`). What a release consumed is read off the release commits
+# the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.mjs`.
+#
+# THE OIDC TOKEN NAMES THE CALLING WORKFLOW'S FILE, according to npm's trusted-publisher documentation ("validation checks the calling
+# workflow's name instead of the workflow that actually contains the publish command"). NOT VERIFIED BY A PUBLISH: the `toolchain` migration row
+# measures it. So each caller keeps the file name its trusted-publisher entry holds, and this file's own name is never what npm is told.
+#
+# A CALLER PINS THIS FILE BY FULL SHA, and its Dependabot `github-actions` entry moves the pin in a pull request the caller reviews. A tag that
+# followed `main` would let a push here change what every repository releases, and what holds each one's OIDC token, with no pull request there.
+# The cost of the sha is a pull request per bump, and a pin nothing moves stops improving: Dependabot is what keeps it moving. The script is
+# fetched at `job.workflow_sha`, the commit this very file was read from, so the pin selects both.
+name: release-per-merge
+
+on:
+  workflow_call:
+    inputs:
+      kind:
+        description: "`npm` publishes the released packages to the registry; `tag` cuts tags and Releases only."
+        required: true
+        type: string
+      gate-check:
+        description: "The name of the check that must have succeeded on the pushed sha."
+        required: false
+        type: string
+        default: gate
+      node-version:
+        required: false
+        type: string
+        default: "22"
+
+permissions:
+  contents: read
+
+# ONE RELEASE AT A TIME, AND NEVER CANCELLED IN FLIGHT: a publish cancelled half way cannot be rolled back, and a release that starts before
+# the last one's tags exist would recompute it. NOT VERIFIED that GitHub honours this key in a called workflow (its documentation does not
+# say), so the caller's job carries the same block; where neither is honoured two runs end in a refused push of a tag, never a moved one.
+concurrency:
+  group: release-per-merge-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Not named after the check it reads: the check-run this job creates would otherwise answer its own query.
+    name: ci gate result on this sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Refuse unless this is main and the kind is one this file knows
+        env:
+          KIND: ${{ inputs.kind }}
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::run on $GITHUB_REF; a release is cut from main only"
+            exit 1
+          fi
+          case "$KIND" in
+            npm|tag) ;;
+            *) echo "::error::kind is '$KIND'; it is npm or tag"; exit 1 ;;
+          esac
+      - name: The gate check must have succeeded on this sha, and is waited for
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK: ${{ inputs.gate-check }}
+          WAIT_SECONDS: "2700"
+          POLL_SECONDS: "20"
+        run: |
+          waited=0
+          while :; do
+            conclusion=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=$CHECK&filter=latest" \
+              --jq '.check_runs | map(select(.app.slug == "github-actions")) | first | if . == null then "none" else (.conclusion // "pending") end')
+            echo "$CHECK on $GITHUB_SHA: $conclusion (waited ${waited}s)"
+            case "$conclusion" in
+              success) exit 0 ;;
+              none|pending) ;;
+              *)
+                echo "::error::$CHECK on $GITHUB_SHA is '$conclusion', not 'success'"
+                exit 1 ;;
+            esac
+            if [ "$waited" -ge "$WAIT_SECONDS" ]; then
+              echo "::error::$CHECK on $GITHUB_SHA was still '$conclusion' after ${WAIT_SECONDS}s"
+              exit 1
+            fi
+            sleep "$POLL_SECONDS"
+            waited=$((waited + POLL_SECONDS))
+          done
+
+  version:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      released: ${{ steps.release.outputs.released || 'false' }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every tag, and the parent of every commit a tag points at, must be here.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The release script, from the commit this workflow was read from
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-tool
+          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Which changesets has no tag consumed yet?
+        id: plan
+        run: |
+          # Out of the release commit's reach: `git add -A` below must not take the tool.
+          echo .release-tool >> .git/info/exclude
+          node .release-tool/scripts/release-per-merge.mjs plan | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: pnpm/action-setup@v6
+        if: steps.plan.outputs.count != '0'
+      - uses: actions/setup-node@v7
+        if: steps.plan.outputs.count != '0'
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+      - name: The release commit, on top of this merge and on no branch
+        id: release
+        if: steps.plan.outputs.count != '0'
+        run: |
+          pnpm install --frozen-lockfile
+          git switch --detach
+          node .release-tool/scripts/release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Carry the release commit to the jobs after this one, as a bundle
+        if: steps.release.outputs.released == 'true'
+        env:
+          MANIFEST: ${{ steps.release.outputs.manifest }}
+        run: |
+          mkdir "$RUNNER_TEMP/carry"
+          git bundle create "$RUNNER_TEMP/carry/release.bundle" HEAD "^$GITHUB_SHA"
+          cp "$MANIFEST" "$RUNNER_TEMP/carry/release.json"
+      - uses: actions/upload-artifact@v7
+        if: steps.release.outputs.released == 'true'
+        with:
+          name: release-commit
+          path: ${{ runner.temp }}/carry
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: [version]
+    if: inputs.kind == 'npm' && needs.version.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    # THE ONLY CONTROL THAT HOLDS AGAINST A BRANCH: no `if:` in a file can keep a branch from publishing, because the branch author writes the
+    # file. This environment's deployment branches are limited to `main` and the npm trusted-publisher entry names it, so a job on another ref
+    # is never minted a token that carries that name.
+    environment: npm-publish
+    permissions:
+      contents: read
+      # Trusted publishing AND provenance: npm signs with a short-lived OIDC token from this job. No `NODE_AUTH_TOKEN` anywhere: a token would
+      # make npm use it and never exercise OIDC.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-commit
+          path: ${{ runner.temp }}/carry
+      - name: Check out the release commit, and nothing else
+        env:
+          SHA: ${{ needs.version.outputs.sha }}
+        run: |
+          git fetch --quiet "$RUNNER_TEMP/carry/release.bundle" HEAD
+          git switch --detach FETCH_HEAD
+          if [ "$(git rev-parse HEAD)" != "$SHA" ]; then
+            echo "::error::the bundle holds $(git rev-parse HEAD), not the release commit $SHA the version job built"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v6
+      # `registry-url` writes the `.npmrc` that npm publishes with.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # TRUSTED PUBLISHING NEEDS npm 11.5.1 OR NEWER, and the npm that ships with Node 22 is older (10.x): without this the publish falls back to a
+      # token this workflow does not have, and fails at the moment of release.
+      - name: Use an npm that can publish with OIDC
+        run: |
+          npm install -g npm@^11.5.1
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11 || (a===11 && (b<5 || (b===5 && c<1)))) { console.error("npm is older than 11.5.1"); process.exit(1) }' "$(npm --version)"
+      - run: pnpm install --frozen-lockfile
+      # A scoped package cannot publish under anything but `"access": "public"`.
+      - name: Refuse unless the config says public
+        run: node -e 'const c=require("./.changeset/config.json"); if (c.access !== "public") { console.error("access is " + c.access); process.exit(1) }'
+      # `changeset publish` skips a version the registry already has, which is what lets a failed release run again. Its own local tags are
+      # never pushed from here: this job holds no write permission.
+      - name: Publish
+        run: pnpm exec changeset publish
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+  tag:
+    needs: [version, publish]
+    # `publish` is skipped for the `tag` kind, and a skipped job would skip this one; `!cancelled()` says to run when it succeeded OR was skipped.
+    if: ${{ !cancelled() && needs.version.outputs.released == 'true' && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      # The tags and the Releases are the only writes. No `pull-requests`, no `id-token`, and no caller code runs here.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: The release script, from the commit this workflow was read from
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-tool
+          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-commit
+          path: ${{ runner.temp }}/carry
+      - name: Check out the release commit
+        env:
+          SHA: ${{ needs.version.outputs.sha }}
+        run: |
+          echo .release-tool >> .git/info/exclude
+          git fetch --quiet "$RUNNER_TEMP/carry/release.bundle" HEAD
+          git switch --detach FETCH_HEAD
+          if [ "$(git rev-parse HEAD)" != "$SHA" ]; then
+            echo "::error::the bundle holds $(git rev-parse HEAD), not the release commit $SHA the version job built"
+            exit 1
+          fi
+      - name: Push the tags, one atomic push, never forced
+        env:
+          SHA: ${{ needs.version.outputs.sha }}
+        run: |
+          # A tag that moved changes what a pinned project gets, so none is ever moved or deleted: a tag that appeared since the version job read
+          # the tags makes this push fail, which is the refusal. A failure after it leaves tags with no Release and a red run; the Release is then
+          # created by hand against the existing tag.
+          mapfile -t tags < <(jq -r '.packages[].tag' "$RUNNER_TEMP/carry/release.json")
+          git push --atomic origin "${tags[@]/#/$SHA:refs/tags/}"
+          for tag in "${tags[@]}"; do
+            cut=$(git ls-remote --tags origin "refs/tags/$tag" | cut -f1)
+            if [ "$cut" != "$SHA" ]; then
+              echo "::error::$tag resolves to '$cut', not the release commit $SHA"
+              exit 1
+            fi
+          done
+      - name: A GitHub Release per tag, its notes the changelog entry the version wrote
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jq -r '.packages[] | [.tag, .dir, .version] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version; do
+            node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
+            # `--latest` only for the lone root package: of several packages' Releases no one is "the" latest.
+            latest=--latest=false
+            [ "$dir" = . ] && latest=--latest
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file "$RUNNER_TEMP/notes.md" "$latest"
+            echo "cut $tag at $(git rev-parse HEAD), on top of $GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
