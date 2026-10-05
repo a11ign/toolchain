@@ -1,0 +1,10 @@
+{
+  // The CHECKER (ADR 0043, Decision 2): `tsc --noEmit` over every `.ts` here, tests and scripts included. Nothing is built by it. Rslib builds
+  // the package, and its declarations come from `packages/toolchain/tsconfig.json`, which leaves the tests out.
+  "extends": "./packages/toolchain/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/rslib.config.ts", "scripts/**/*.ts", "rstest.config.ts"]
+}

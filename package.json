@@ -1,0 +1,31 @@
+{
+  "name": "toolchain-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "lint": "eslint .",
+    "pretypecheck": "pnpm run build",
+    "typecheck": "tsc --noEmit",
+    "pretest": "pnpm run build",
+    "test": "rstest run",
+    "consumer-check": "pnpm run build && tsx scripts/clean-consumer.ts",
+    "release:version": "changeset version && pnpm install --lockfile-only",
+    "release:plan": "node scripts/release-plan.mjs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "3.0.3",
+    "@eslint/js": "^10.0.1",
+    "@rslib/core": "1.0.3",
+    "@rstest/core": "0.12.3",
+    "@rstest/coverage-v8": "0.12.3",
+    "@types/node": "^26.6.4",
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0"
+  }
+}
