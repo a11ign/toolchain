@@ -15,7 +15,7 @@ export default tseslint.config(
     ignores: ["node_modules/**", "**/dist/**", "**/*.json"],
   },
 
-  // Baseline for every source file (.ts source and tests, and the .mjs release-plan script).
+  // Baseline for every source file (.ts source and tests, and the .mjs release-per-merge script).
   js.configs.recommended,
   {
     files: ["**/*.{ts,mjs,js}"],

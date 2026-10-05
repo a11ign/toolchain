@@ -13,9 +13,7 @@
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm run build",
     "test": "rstest run",
-    "consumer-check": "pnpm run build && tsx scripts/clean-consumer.ts",
-    "release:version": "changeset version && pnpm install --lockfile-only",
-    "release:plan": "node scripts/release-plan.mjs"
+    "consumer-check": "pnpm run build && tsx scripts/clean-consumer.ts"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
