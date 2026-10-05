@@ -30,3 +30,4 @@ const hook = /** @type {{ execArgv?: string[] } | undefined} */ (config.pool)?.e
 assert.ok(typeof hook === "string" && hook.endsWith("register-node-test-alias.mjs") && existsSync(hook), `the config's hook is not a shipped .mjs: ${hook}`);
 assert.match(verdictLine({ results: [{ status: "pass" }], testResults: [{ status: "pass" }] }), /^VERDICT pass: 1 test in 1 file$/);
 assert.equal(typeof entriesFromExports, "function");
+console.log("@a11ign/toolchain works when installed: 7 entries import, 3 subpaths resolve to shipped files, the config's hook is a shipped .mjs, the verdict line is formed");
