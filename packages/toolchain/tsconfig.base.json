@@ -1,0 +1,24 @@
+{
+  // The shared TypeScript base every a11ign repository extends (ADR 0043, Decision 3). A published package emits
+  // through Rslib, never through `tsc`, so this base carries no `composite`, `outDir` or `rootDir`: those belong to the
+  // project references a11ign's own `tsconfig.base.json` still adds on top of this file until row 4c-a11ign deletes them.
+  //
+  // `declarationMap` and `sourceMap` are OFF on purpose. The maps point at a `src/` that a published package does not
+  // ship, so a consumer's `npm pack --dry-run` would list files whose targets are not in the tarball (ADR 0043, Decision 4).
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+
+    // `.mjs` is still type-checked where a repository keeps some, so JS must be allowed in.
+    "allowJs": true,
+
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false
+  }
+}

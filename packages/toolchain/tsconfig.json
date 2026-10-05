@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // The sources import each other as `./x.ts`, because Node strips types from a `.ts` file outside `node_modules` and
+    // wants the real extension (a11ign's own test config loads this package's source, with no `dist`). `rewriteRelativeImportExtensions`
+    // turns them into `.js` in the declarations Rslib emits, so a consumer's `tsc` with `skipLibCheck` off reads them. `tsc` itself
+    // emits nothing here: Rslib builds, `tsc` only checks. `rootDir` is explicit because TypeScript 6 refuses to guess it (TS5011).
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "src",
+    "noEmit": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}
