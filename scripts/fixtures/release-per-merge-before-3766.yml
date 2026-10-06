@@ -139,8 +139,6 @@ jobs:
           persist-credentials: false
       - name: Which changesets has no tag consumed yet?
         id: plan
-        # `bash` is `bash -eo pipefail`; the default `bash -e` has no pipefail, so `script | tee` took `tee`'s status and a script that died read as success (#3766).
-        shell: bash
         run: |
           # Out of the release commit's reach: `git add -A` below must not take the tool.
           echo .release-tool >> .git/info/exclude
@@ -155,8 +153,6 @@ jobs:
       - name: The release commit, on top of this merge and on no branch
         id: release
         if: steps.plan.outputs.count != '0'
-        # `bash` is `bash -eo pipefail`; the default `bash -e` has no pipefail, so `script | tee` took `tee`'s status and a script that died read as success (#3766).
-        shell: bash
         run: |
           pnpm install --frozen-lockfile
           git switch --detach
@@ -287,8 +283,6 @@ jobs:
       - name: A GitHub Release per tag, its notes the changelog entry the version wrote
         env:
           GH_TOKEN: ${{ github.token }}
-        # Under pipefail so a `jq` that fails ends the step red instead of feeding the loop nothing and cutting no Release.
-        shell: bash
         run: |
           jq -r '.packages[] | [.tag, .dir, .version] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version; do
             node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
