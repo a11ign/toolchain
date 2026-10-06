@@ -41,6 +41,8 @@ export default defineConfig(libraryPreset(pkg, { dir: import.meta.dirname }));
 One entry per `exports` key, derived from the package's own `exports` map by `entriesFromExports`, so a subpath cannot be added to one and forgotten in the other.
 `entryProblems(pkg, entries)` is the test a package runs to prove it, in both directions. A source may be `.ts` or `.mjs`; an `exports` key with no source throws.
 
+**The preset leaves `new URL("./x", import.meta.url)` as written** (a11ign/a11ign#3735): Rslib's default parser builds that form into an asset and rewrites the URL to `./static/assets/…`, so a package that reads its own directory would get the wrong answer from its build. The preset sets `parser: { url: false }` for `.js`/`.mjs`/`.cjs`/`.ts`/`.mts`/`.cts` sources, so a package does NOT set it in its own `rslib.config`. A package that hand-wrote this rule (`screenreader-worker` did) can delete its copy on upgrading.
+
 ## The TypeScript base
 
 ```json
