@@ -12,6 +12,12 @@
  *
  * `autoExternal` is `output.autoExternal`: `lib.autoExternal` is deprecated in @rslib/core 1.0.3 and warns.
  *
+ * `cleanDistPath: false` (a11ign/a11ign#3580, #3824): Rslib empties `dist` before every build, and a `prepack` runs one whenever anything packs a
+ * package, so a reader of `dist` (another test file in the suite) found a built file MISSING for the length of the build. Measured 2026-10-06
+ * over one `rslib build` of `packages/scorer` (1.97 s) with a poller reading `dist/evidence-units.mjs`: 5,735 of 239,434 reads (2.4%) found it
+ * absent; with this off, 0 of about 700,000 across three builds. A build now overwrites in place. A removed entry's old file is left behind
+ * locally, and a publish builds from a clean checkout.
+ *
  * `new URL("./x", import.meta.url)` IS LEFT AS WRITTEN (a11ign/a11ign#3735, found by #3552). Rslib's default parser turns that form
  * into an ASSET: measured on a fixture package with @rslib/core 1.0.3, `fileURLToPath(new URL("./", import.meta.url))` came out as
  * `new URL("./static/assets/index.ts", import.meta.url)` and `dist/static/assets/index.ts` appeared, so a package that reads its own
@@ -28,7 +34,7 @@ export type LibraryConfig = {
     bundle: true;
     dts: true;
     source: { entry: Record<string, string> };
-    output: { target: "node"; autoExternal: true; filename: { js: string } };
+    output: { target: "node"; autoExternal: true; cleanDistPath: false; filename: { js: string } };
     tools: { rspack: { module: { rules: [{ test: RegExp; parser: { url: false } }] } } };
   }];
 };
@@ -43,7 +49,7 @@ export function libraryPreset(pkg: PackageExports, options: EntryOptions): Libra
       bundle: true,
       dts: true,
       source: { entry: entriesFromExports(pkg, options) },
-      output: { target: "node", autoExternal: true, filename: { js: "[name].mjs" } },
+      output: { target: "node", autoExternal: true, cleanDistPath: false, filename: { js: "[name].mjs" } },
       tools: { rspack: { module: { rules: [{ test: SCRIPT_SOURCE, parser: { url: false } }] } } },
     }],
   };
