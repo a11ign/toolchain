@@ -156,24 +156,60 @@ function refuseUnknownLoneDir(cwd, loneDir) {
 
 /** @param {string} cwd @param {string} file @param {(manifest: Record<string, unknown>) => void} edit */
 function editManifest(cwd, file, edit) {
-  const manifest = JSON.parse(readFileSync(join(cwd, file), "utf8"));
+  const before = readFileSync(join(cwd, file), "utf8");
+  const manifest = JSON.parse(before);
   edit(manifest);
-  writeFileSync(join(cwd, file), `${JSON.stringify(manifest, null, 2)}\n`);
+  const after = `${JSON.stringify(manifest, null, 2)}\n`;
+  // A manifest the edit did not change is left byte for byte, so a package with no tag and no moved pin is not reformatted into the release commit.
+  if (JSON.stringify(JSON.parse(before)) !== JSON.stringify(manifest)) writeFileSync(join(cwd, file), after);
+}
+
+const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+
+/**
+ * Where an exact pin on a package that moved back to its tag must move too. The merge pins `b` to `a@1.0.0` because `main` still reads 1.0.0; the rebase puts `a`
+ * at its tag's 1.1.0, and a pin left at 1.0.0 is a version `changeset version` warns about and `pnpm install --lockfile-only` then looks for on the REGISTRY, where
+ * an unpublished 1.0.0 is not (a11ign/a11ign#4023). Only a pin equal to the version `main` reads is moved: a range, `workspace:` or a pin elsewhere is the merge's own.
+ * @param {string} cwd @param {Map<string | null, { tag: string, version: string }>} latest @param {string | null} loneDir
+ * @returns {Map<string, { from: string, to: string }>} by package name
+ */
+function movedPins(cwd, latest, loneDir) {
+  const moved = new Map();
+  for (const { name, dir, version } of manifests(cwd)) {
+    const to = (latest.get(name) ?? (isLone(dir, loneDir) ? latest.get(null) : undefined))?.version;
+    if (to && to !== version) moved.set(name, { from: version, to });
+  }
+  return moved;
+}
+
+/** @param {Record<string, unknown>} manifest @param {Map<string, { from: string, to: string }>} moved */
+function repinMoved(manifest, moved) {
+  for (const field of DEPENDENCY_FIELDS) {
+    const dependencies = /** @type {Record<string, string>} */ (manifest[field] ?? {});
+    for (const [name, range] of Object.entries(dependencies)) {
+      const pin = moved.get(name);
+      if (pin?.from === range) dependencies[name] = pin.to;
+    }
+  }
 }
 
 /**
- * Put each tagged package back at its last release: that tag's version and that tag's changelog, so entries accumulate.
- * A package with no tag keeps what the merge has. Only the version is taken: the rest of package.json is this merge's.
+ * Put each tagged package back at its last release: that tag's version and that tag's changelog, so entries accumulate, and the exact pins on a package that moved
+ * with it. A package with no tag keeps what the merge has. Only the version and those pins are taken: the rest of package.json is this merge's.
  * @param {{ cwd: string, loneDir: string | null }} options @returns {Map<string, string>} each package's version after, by directory
  */
 function rebaseOnLastTags({ cwd, loneDir }) {
   const latest = latestTags(cwd);
+  const moved = movedPins(cwd, latest, loneDir);
   const versions = new Map();
   for (const { name, dir, version } of manifests(cwd)) {
     const tagged = latest.get(name) ?? (isLone(dir, loneDir) ? latest.get(null) : undefined);
     const base = tagged?.version ?? version;
+    editManifest(cwd, join(dir, "package.json"), (manifest) => {
+      if (tagged) manifest.version = base;
+      repinMoved(manifest, moved);
+    });
     if (tagged) {
-      editManifest(cwd, join(dir, "package.json"), (manifest) => void (manifest.version = base));
       const changelog = join(dir, "CHANGELOG.md");
       // `ls-tree` prints nothing for a package whose last release wrote no changelog, which `show` would call an error.
       if (git(cwd, ["ls-tree", "--name-only", tagged.tag, "--", changelog]).trim()) writeFileSync(join(cwd, changelog), git(cwd, ["show", `${tagged.tag}:${changelog.replace(/^\.\//, "")}`]));

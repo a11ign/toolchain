@@ -266,6 +266,24 @@ test("the next package to release is versioned from its OWN last tag, and a pack
   });
 });
 
+const dependencyOf = (root: string, rev: string, pin: { dir: string; field: string; name: string }): string => JSON.parse(git(root, "show", `${rev}:packages/${pin.dir}/package.json`))[pin.field][pin.name];
+
+test("an exact pin on a package that moved to its tag moves with it, so the lockfile refresh never asks the registry for the version main still reads (a11ign/a11ign#4023)", () => {
+  inScratch((root) => {
+    write(root, "packages/b/package.json", manifest("b", { dependencies: { a: "1.0.0" }, devDependencies: { p: "1.0.0" }, peerDependencies: { a: "^1.0.0" } }));
+    commit(root, "b pins a exactly, as main does");
+    changeset(root, "one", { a: "minor" });
+    const first = cut(root).result;
+    changeset(root, "three", { b: "patch" });
+    const { result } = cut(root);
+    assert.ok(first.released && result.released, "positive control: both releases were made, so the second runs over a main whose a is behind its tag");
+    assert.equal(versionOf(root, result.sha, "a"), "1.1.0", "positive control: a is at its tag, which is what leaves main's pin behind");
+    assert.equal(dependencyOf(root, result.sha, { dir: "b", field: "dependencies", name: "a" }), "1.1.0", "the exact pin follows a to its tag");
+    assert.equal(dependencyOf(root, result.sha, { dir: "b", field: "peerDependencies", name: "a" }), "^1.0.0", "a range is the merge's own and is left");
+    assert.equal(dependencyOf(root, result.sha, { dir: "b", field: "devDependencies", name: "p" }), "1.0.0", "a package that did not move keeps its pin");
+  });
+});
+
 test("a changeset naming only a private package releases nothing and writes no commit", () => {
   inScratch((root) => {
     changeset(root, "private", { p: "minor" });
