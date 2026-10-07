@@ -21,6 +21,14 @@
 // WHAT IS REFUSED BEFORE A TAG EXISTS (parity with agent-org's own release, a11ign/a11ign#3964): a version that is not MAJOR.MINOR.PATCH, and a
 // package whose CHANGELOG.md has no entry for the version it moved to. Both throw in `buildRelease`, before the release commit, so the bundle never
 // leaves the `version` job: the `tag` job reads the same entry only to write the Release, and a tag with no Release is what this prevents.
+//
+// THE RELEASE COMMIT CARRIES THE TIP'S `.github/workflows` (a11ign/a11ign#4010). GitHub refuses a push, by `GITHUB_TOKEN`, of a commit whose
+// `.github/workflows` differs from the TIP of the default branch ("refusing to allow a GitHub App to create or update workflow ... without
+// `workflows` permission"), and it compares against the tip, NOT against the commit's parent. Measured 2026-10-07: a commit changing one
+// `.txt` file was refused on an old parent and accepted on the tip's; an old parent with the tip's workflows was accepted; the REST API is
+// refused identically. A release commit sits on the merge it releases, so any workflow file merged since made every tag push fail. The
+// commit therefore takes its `.github/workflows` from the tip (`graftTipWorkflows`, `TIP`), and the `tag` job checks, before pushing, that
+// the tip has not moved them again (`assertWorkflowsHeld`). The parent is still the merge released; only this one directory differs.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -215,13 +223,44 @@ function refuseUnreleasable(cwd, { name, dir, version }) {
   }
 }
 
+/** The tree object of `.github/workflows` at `rev`, or "" where `rev` has none. Two revisions with the same value hold the same workflows. @param {string} cwd @param {string} rev */
+export function workflowsTree(cwd, rev) {
+  const [, , tree] = git(cwd, ["ls-tree", "-d", rev, "--", ".github/workflows"]).trim().split(/\s+/);
+  return tree ?? "";
+}
+
 /**
- * @param {{ cwd: string, changesetVersion: (cwd: string) => void, kind: "npm" | "tag", released?: (cwd: string) => Set<string>, lonePackageDir?: string }} options
+ * Make HEAD's `.github/workflows` the tip's, amending HEAD, so GitHub reads no workflow change when HEAD is pushed (a11ign/a11ign#4010).
+ * @param {{ cwd: string, tip: string }} options `tip` is any revision naming the default branch's tip, read as late as the caller can.
+ * @returns {boolean} whether HEAD was amended
+ */
+export function graftTipWorkflows({ cwd, tip }) {
+  const wanted = workflowsTree(cwd, tip);
+  if (wanted === workflowsTree(cwd, "HEAD")) return false;
+  git(cwd, ["rm", "-rq", "--ignore-unmatch", "--", ".github/workflows"]);
+  if (wanted) git(cwd, ["checkout", tip, "--", ".github/workflows"]);
+  git(cwd, [...COMMITTER, "commit", "-q", "--amend", "--no-edit"]);
+  return true;
+}
+
+/**
+ * The refusal GitHub would make, said first and in words: the tip's workflows are not the commit's, so a push of it is going to be rejected.
+ * @param {{ cwd: string, commit: string, tip: string }} options
+ */
+export function assertWorkflowsHeld({ cwd, commit, tip }) {
+  const [held, moved] = [workflowsTree(cwd, commit), workflowsTree(cwd, tip)];
+  if (held === moved) return;
+  throw new Error(`.github/workflows moved on the default branch after this release commit was built (commit ${held || "none"}, tip ${moved || "none"}); GitHub refuses a push of it, so no tag is pushed. Run the release again from the tip.`);
+}
+
+/**
+ * @param {{ cwd: string, changesetVersion: (cwd: string) => void, kind: "npm" | "tag", released?: (cwd: string) => Set<string>, lonePackageDir?: string, tip?: string }} options
  *   `changesetVersion` runs `changeset version` (and refreshes the lockfile) in `cwd`. `kind` is the caller's, and decides whether a private lone package is released.
  *   `lonePackageDir` is the caller's `lone-package-dir`: the package there is tagged `vx.y.z` as a root package is.
+ *   `tip`, where given, is the revision whose `.github/workflows` the release commit takes (see the head of this file); the workflow reads it as late as it can.
  * @returns {{ released: false, reason: string } | { released: true, sha: string, packages: ReleasedPackage[] }}
  */
-export function buildRelease({ cwd, changesetVersion, kind, released, lonePackageDir }) {
+export function buildRelease({ cwd, changesetVersion, kind, released, lonePackageDir, tip }) {
   const loneDir = loneDirOf(lonePackageDir);
   refuseUnknownLoneDir(cwd, loneDir);
   if (existsSync(join(cwd, ".changeset", "pre.json"))) throw new Error("pre-release mode (.changeset/pre.json) is not supported: every tag here is a plain x.y.z");
@@ -237,6 +276,7 @@ export function buildRelease({ cwd, changesetVersion, kind, released, lonePackag
   for (const released of packages) refuseUnreleasable(cwd, released);
   git(cwd, ["add", "-A"]);
   git(cwd, [...COMMITTER, "commit", "-q", "-m", `Release ${packages.map(({ tag }) => tag).join(", ")}`]);
+  if (tip) graftTipWorkflows({ cwd, tip });
   return { released: true, sha: git(cwd, ["rev-parse", "HEAD"]).trim(), packages };
 }
 
@@ -301,14 +341,15 @@ function main() {
   }
   if (command === "setup") return setOutputs(pnpmSetup({ cwd, pnpmVersion: process.env.PNPM_VERSION ?? "" }));
   if (command === "version") {
-    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi, kind: kindOf(process.env.KIND), lonePackageDir: process.env.LONE_PACKAGE_DIR });
+    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi, kind: kindOf(process.env.KIND), lonePackageDir: process.env.LONE_PACKAGE_DIR, tip: process.env.TIP || undefined });
     if (!result.released) return setOutputs({ released: "false", reason: result.reason });
     const manifest = join(process.env.RUNNER_TEMP ?? tmpdir(), "release.json");
     writeFileSync(manifest, `${JSON.stringify(result, null, 2)}\n`);
     return setOutputs({ released: "true", sha: result.sha, manifest });
   }
+  if (command === "check-workflows") return assertWorkflowsHeld({ cwd, commit: "HEAD", tip: process.env.TIP ?? "" });
   if (command === "notes") return process.stdout.write(changelogEntry(readFileSync(join(cwd, rest[0], "CHANGELOG.md"), "utf8"), rest[1]));
-  throw new Error(`unknown command '${command}': plan, setup, version or notes`);
+  throw new Error(`unknown command '${command}': plan, setup, version, check-workflows or notes`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
