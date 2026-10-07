@@ -146,6 +146,8 @@ function pnpmStandIn(dir: string): { bin: string; log: string } {
 
 type VersionJob = { failed?: { step: string; stderr: string } /* stdout too: pnpm writes its errors there */; outputs: Record<string, string>; actions: Record<string, Record<string, string>>; pnpmCalls: string[]; installedModules: boolean; tags: string[] };
 
+const notTheTipFetch = (step: Step): boolean => !step.name?.startsWith("The tip of the default branch");
+
 /** Every `run` step of the `version` job up to and including the release step, in order, stopping at the first that fails as the runner does; the actions' `with:` are evaluated, not started. */
 function runVersionJob(shape: Shape, inputs: Record<string, string>): VersionJob {
   return scratch("parity-version-", (dir) => {
@@ -158,8 +160,10 @@ function runVersionJob(shape: Shape, inputs: Record<string, string>): VersionJob
     const context: Context = { inputs: { ...defaults, kind: "tag", ...inputs }, steps: {}, needs: {} };
     const env = { PATH: `${bin}:${process.env.PATH}`, GITHUB_SHA: git(root, "rev-parse", "HEAD").trim(), RUNNER_TEMP: join(dir, "tmp") };
     mkdirSync(env.RUNNER_TEMP);
+    // There is no network and no origin here, so the step that fetches the tip is not run; the tip is the merge itself, whose workflows the release commit already has (release-per-merge.test.ts runs the graft).
+    git(root, "update-ref", "refs/remotes/tip/main", "HEAD");
     const job: VersionJob = { outputs: {}, actions: {}, pnpmCalls: [], installedModules: false, tags: [] };
-    for (const step of workflow.jobs.version.steps ?? []) {
+    for (const step of (workflow.jobs.version.steps ?? []).filter(notTheTipFetch)) {
       if (!holds(step.if, context)) continue;
       if (step.uses && /^(pnpm\/action-setup|actions\/setup-node)@/.test(step.uses)) job.actions[step.uses.replace(/@.*/, "")] = Object.fromEntries(Object.entries(step.with ?? {}).map(([key, value]) => [key, evaluate(String(value), context)]));
       if (!step.run) continue;
