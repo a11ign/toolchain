@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { buildRelease, changelogEntry, namesARelease, parseReleaseTag, unreleasedChangesets } from "./release-per-merge.mjs";
+import { buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets } from "./release-per-merge.mjs";
 
 // WHAT THIS PINS, AND HOW IT READS THE WORKFLOW. `release-per-merge.yml` is read as YAML and judged on STRUCTURE (keys, permissions, `needs`,
 // `if`), never on words: the file's comments explain WHY in the very words a text match would find. The version logic is not read at all:
@@ -295,6 +295,113 @@ test("an empty changeset is not unreleased, and the lone package at the root is 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ---- the lone package below the root (a11ign/a11ign#3966) ---------------------------------------------------------------------------
+
+/** a11ign/lab's shape: one private package at `packages/lab`, a `lerna.json` and no pnpm workspace, last released as `v1.0.0`. */
+function lerna(): string {
+  const root = mkdtempSync(join(tmpdir(), "release-per-merge-"));
+  git(root, "init", "-q", "-b", "main");
+  write(root, "lerna.json", JSON.stringify({ packages: ["packages/*"], version: "independent" }));
+  // `changeset version` reads a lerna layout only with a root `package.json`, which carries no version of its own.
+  write(root, "package.json", `${JSON.stringify({ name: "lab-root", private: true }, null, 2)}\n`);
+  write(root, "packages/lab/package.json", manifest("@a11ign/lab", { private: true }));
+  write(root, ".changeset/README.md", "# Changesets\n");
+  write(root, ".changeset/config.json", JSON.stringify({ changelog: require.resolve("@changesets/cli/changelog"), commit: false, baseBranch: "main", privatePackages: { version: true, tag: false } }));
+  commit(root, "baseline");
+  commit(root, "the release of the baseline");
+  git(root, "tag", "v1.0.0");
+  return root;
+}
+
+type Cut = { kind?: "npm" | "tag"; lonePackageDir?: string };
+function cutLerna(root: string, { kind = "tag", lonePackageDir }: Cut = {}) {
+  git(root, "checkout", "-q", "--detach");
+  try {
+    const result = buildRelease({ cwd: root, changesetVersion, kind, lonePackageDir });
+    if (result.released) for (const { tag } of result.packages) git(root, "tag", tag);
+    return result;
+  } finally {
+    git(root, "checkout", "-q", "-f", "main");
+  }
+}
+
+function inLerna(body: (root: string) => void): void {
+  const root = lerna();
+  try {
+    changeset(root, "fix", { "@a11ign/lab": "patch" });
+    body(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("a private package at a subdirectory is tagged v<version> when the caller names it, and its Release is the latest one", () => {
+  inLerna((root) => {
+    const result = cutLerna(root, { lonePackageDir: "packages/lab" });
+    assert.ok(result.released, "positive control: the release happened, so the assertions below read a tag and not an empty list");
+    assert.deepEqual(result.packages.map(({ tag, dir, lone }) => ({ tag, dir, lone })), [{ tag: "v1.0.1", dir: "packages/lab", lone: true }]);
+    assert.deepEqual(tags(root), ["v1.0.0", "v1.0.1"]);
+    assert.match(git(root, "show", `${result.sha}:packages/lab/CHANGELOG.md`), /## 1\.0\.1/);
+  });
+});
+
+test("CONTROL: the same repository with the input unset releases nothing and writes no commit", () => {
+  inLerna((root) => {
+    const head = git(root, "rev-parse", "HEAD").trim();
+    const result = cutLerna(root);
+    assert.deepEqual(result, { released: false, reason: "the changesets move no releasable package's version" });
+    assert.equal(git(root, "rev-parse", "HEAD").trim(), head);
+    assert.deepEqual(tags(root), ["v1.0.0"]);
+  });
+});
+
+test("kind npm still never releases a private package, named or not", () => {
+  inLerna((root) => {
+    assert.equal(cutLerna(root, { kind: "npm", lonePackageDir: "packages/lab" }).released, false);
+  });
+});
+
+test("the next release is versioned from the v-tag the last one cut, and the consumed changeset is not released twice", () => {
+  inLerna((root) => {
+    assert.ok(cutLerna(root, { lonePackageDir: "packages/lab" }).released);
+    commit(root, "docs only");
+    assert.equal(cutLerna(root, { lonePackageDir: "packages/lab" }).released, false, "a merge with no new changeset makes no tag");
+    changeset(root, "feature", { "@a11ign/lab": "minor" });
+    const second = cutLerna(root, { lonePackageDir: "packages/lab" });
+    assert.ok(second.released);
+    assert.deepEqual(second.packages.map(({ tag }) => tag), ["v1.1.0"]);
+    const changelog = git(root, "show", `${second.sha}:packages/lab/CHANGELOG.md`);
+    assert.match(changelog, /## 1\.1\.0[\s\S]*## 1\.0\.1/, "the changelog accumulates from the last tag's");
+  });
+});
+
+test("a directory that holds no package is refused by name, not read as 'nothing to release'", () => {
+  inLerna((root) => {
+    assert.throws(() => cutLerna(root, { lonePackageDir: "packages/lib" }), /lone-package-dir is 'packages\/lib'.*no package\.json is tracked there/);
+    assert.deepEqual(tags(root), ["v1.0.0"]);
+  });
+});
+
+test("naming a directory makes the root an ordinary package: its manifest is not given the lone package's version, and it is not tagged v<version>", () => {
+  inLerna((root) => {
+    const rootManifest = readFileSync(join(root, "package.json"), "utf8");
+    const result = cutLerna(root, { lonePackageDir: "packages/lab" });
+    assert.ok(result.released);
+    assert.equal(git(root, "show", `${result.sha}:package.json`), rootManifest, "the release commit leaves the root's package.json as the merge had it");
+    assert.deepEqual(result.packages.map(({ tag }) => tag), ["v1.0.1"]);
+  });
+});
+
+test("the input is read as a directory inside the repository", () => {
+  assert.equal(loneDirOf(undefined), null);
+  assert.equal(loneDirOf(""), null);
+  assert.equal(loneDirOf("  "), null);
+  assert.equal(loneDirOf("packages/lab"), "packages/lab");
+  assert.equal(loneDirOf("./packages/lab/"), "packages/lab");
+  assert.equal(loneDirOf("."), ".");
+  for (const outside of ["..", "../x", "/etc", "packages/../.."]) assert.throws(() => loneDirOf(outside), /a directory inside the repository/, outside);
 });
 
 test("pre-release mode is refused: every tag is a plain x.y.z", () => {

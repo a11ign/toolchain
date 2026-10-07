@@ -26,7 +26,9 @@
 #
 # ONE TAG PER PACKAGE, as changesets names them: `name@x.y.z`, or `vx.y.z` for the lone package at the repository root. `kind: npm` releases no
 # private package. `kind: tag` has no registry to protect one from, so it releases the private package at the ROOT (lab and control are
-# `"private": true` with `privatePackages: { version: true, tag: false }`), and no private package below it. A version that is not
+# `"private": true` with `privatePackages: { version: true, tag: false }`), and no private package below it. THE LONE PACKAGE MAY BE BELOW THE ROOT:
+# a caller whose one versioned package sits in a subdirectory (a11ign/lab: `packages/lab`, no workspace) names it in `lone-package-dir`, and that package is
+# tagged `vx.y.z` and its Release marked latest, exactly as a root package is; under `kind: tag` it is released though private. Unset, nothing changes. A version that is not
 # MAJOR.MINOR.PATCH, or a package whose CHANGELOG.md has no entry for it, is refused in `version`, before any tag. What a release consumed is read off the release commits
 # the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.mjs`.
 #
@@ -71,6 +73,11 @@ on:
         required: false
         type: string
         default: "3.0.3"
+      lone-package-dir:
+        description: "The directory of the repository's one versioned package, when it is not at the root. That package is tagged `vx.y.z` and its Release is the latest one, as a root package's is, and under `kind: tag` it is released though private. Empty, nothing changes: only a package at the root is the lone one."
+        required: false
+        type: string
+        default: ""
       dist-tag:
         description: "The npm dist-tag the packages are published under (`latest`, or a channel such as `next`). It only names the tag the registry gets: the tags, the gates and the OIDC publish are the same, and a Release for any tag but `latest` is not marked the latest Release."
         required: false
@@ -192,6 +199,7 @@ jobs:
         env:
           KIND: ${{ inputs.kind }}
           CHANGESETS_VERSION: ${{ inputs.changesets-version }}
+          LONE_PACKAGE_DIR: ${{ inputs.lone-package-dir }}
         # `bash` is `bash -eo pipefail`; the default `bash -e` has no pipefail, so `script | tee` took `tee`'s status and a script that died read as success (#3766).
         shell: bash
         run: |
@@ -329,12 +337,12 @@ jobs:
         # Under pipefail so a `jq` that fails ends the step red instead of feeding the loop nothing and cutting no Release.
         shell: bash
         run: |
-          jq -r '.packages[] | [.tag, .dir, .version] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version; do
+          jq -r '.packages[] | [.tag, .dir, .version, (.lone // false)] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version lone; do
             node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
-            # `--latest` only for the lone root package: of several packages' Releases no one is "the" latest. And only on the `latest` dist-tag:
+            # `--latest` only for the lone package (the root's, or the one `lone-package-dir` names): of several packages' Releases no one is "the" latest. And only on the `latest` dist-tag:
             # a Release for any other is a channel's, and must not displace the Release people are sent to.
             latest=--latest=false
-            [ "$dir" = . ] && [ "$DIST_TAG" = latest ] && latest=--latest
+            { [ "$dir" = . ] || [ "$lone" = true ]; } && [ "$DIST_TAG" = latest ] && latest=--latest
             gh release create "$tag" --verify-tag --title "$tag" --notes-file "$RUNNER_TEMP/notes.md" "$latest"
             echo "cut $tag at $(git rev-parse HEAD), on top of $GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
           done
