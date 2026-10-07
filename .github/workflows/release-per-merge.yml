@@ -24,9 +24,16 @@
 #   tag      the tags and the GitHub Releases. The ONLY job with `contents: write`, and it runs no caller code: it fetches the bundle, pushes
 #            tags (never a branch, never forced, one atomic push) and reads CHANGELOG.md.
 #
-# ONE TAG PER PACKAGE, as changesets names them: `name@x.y.z`, or `vx.y.z` for the lone package at the repository root. A private package is
-# versioned and tagged by neither (`privatePackages: { version: false, tag: false }`). What a release consumed is read off the release commits
+# ONE TAG PER PACKAGE, as changesets names them: `name@x.y.z`, or `vx.y.z` for the lone package at the repository root. `kind: npm` releases no
+# private package. `kind: tag` has no registry to protect one from, so it releases the private package at the ROOT (lab and control are
+# `"private": true` with `privatePackages: { version: true, tag: false }`), and no private package below it. A version that is not
+# MAJOR.MINOR.PATCH, or a package whose CHANGELOG.md has no entry for it, is refused in `version`, before any tag. What a release consumed is read off the release commits
 # the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.mjs`.
+#
+# A REPOSITORY NEED NOT HAVE A LOCKFILE (agent-org has none, no `packageManager`, and `@changesets/cli` is not a dependency). With one, `version`
+# runs `pnpm install --frozen-lockfile` and the repository's own `changeset`. Without, it installs nothing and runs `pnpm dlx
+# @changesets/cli@<changesets-version>`; pnpm itself comes from `packageManager`, else from the `pnpm-version` input, and a repository with neither
+# is refused by name.
 #
 # THE OIDC TOKEN NAMES THE CALLING WORKFLOW'S FILE, according to npm's trusted-publisher documentation ("validation checks the calling
 # workflow's name instead of the workflow that actually contains the publish command"). NOT VERIFIED BY A PUBLISH: the `toolchain` migration row
@@ -54,6 +61,16 @@ on:
         required: false
         type: string
         default: "22"
+      pnpm-version:
+        description: "The pnpm to install, for a repository whose package.json has no `packageManager`. Where there is one it is read instead, and this is ignored."
+        required: false
+        type: string
+        default: ""
+      changesets-version:
+        description: "The `@changesets/cli` version `pnpm dlx` runs, for a repository with no lockfile. Where there is a lockfile the repository's own is run, and this is ignored."
+        required: false
+        type: string
+        default: "3.0.3"
       dist-tag:
         description: "The npm dist-tag the packages are published under (`latest`, or a channel such as `next`). It only names the tag the registry gets: the tags, the gates and the OIDC publish are the same, and a Release for any tag but `latest` is not marked the latest Release."
         required: false
@@ -150,20 +167,35 @@ jobs:
           # Out of the release commit's reach: `git add -A` below must not take the tool.
           echo .release-tool >> .git/info/exclude
           node .release-tool/scripts/release-per-merge.mjs plan | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Which pnpm, and is there a lockfile to install from and to key a cache on?
+        id: setup
+        if: steps.plan.outputs.count != '0'
+        # `bash` is `bash -eo pipefail`; the default `bash -e` has no pipefail, so `script | tee` took `tee`'s status and a script that died read as success (#3766).
+        shell: bash
+        env:
+          PNPM_VERSION: ${{ inputs.pnpm-version }}
+        run: node .release-tool/scripts/release-per-merge.mjs setup | tee -a "$GITHUB_STEP_SUMMARY"
+      # An empty `version` makes the action read `packageManager`; given both, it refuses a pair that differs.
       - uses: pnpm/action-setup@v6
         if: steps.plan.outputs.count != '0'
+        with:
+          version: ${{ steps.setup.outputs.pnpm-version }}
+      # An empty `cache` is no cache: `cache: pnpm` fails the step where there is no lockfile to key it on.
       - uses: actions/setup-node@v7
         if: steps.plan.outputs.count != '0'
         with:
           node-version: ${{ inputs.node-version }}
-          cache: pnpm
+          cache: ${{ steps.setup.outputs.cache }}
       - name: The release commit, on top of this merge and on no branch
         id: release
         if: steps.plan.outputs.count != '0'
+        env:
+          KIND: ${{ inputs.kind }}
+          CHANGESETS_VERSION: ${{ inputs.changesets-version }}
         # `bash` is `bash -eo pipefail`; the default `bash -e` has no pipefail, so `script | tee` took `tee`'s status and a script that died read as success (#3766).
         shell: bash
         run: |
-          pnpm install --frozen-lockfile
+          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
           git switch --detach
           node .release-tool/scripts/release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Carry the release commit to the jobs after this one, as a bundle

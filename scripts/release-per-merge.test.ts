@@ -180,7 +180,7 @@ function cut(root: string, released?: (cwd: string) => Set<string>) {
   const main = git(root, "rev-parse", "main").trim();
   git(root, "checkout", "-q", "--detach");
   try {
-    const result = buildRelease({ cwd: root, changesetVersion, released });
+    const result = buildRelease({ cwd: root, changesetVersion, kind: "npm", released });
     if (result.released) for (const { tag } of result.packages) git(root, "tag", tag);
     return { result, main };
   } finally {
