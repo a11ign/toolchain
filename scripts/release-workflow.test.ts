@@ -174,7 +174,7 @@ test("the Publish step carries --tag with the dist-tag input", () => {
 });
 
 // The Release script is run as written, with a stub `gh`, so what is read is the flag `gh release create` is given and not the words around it.
-function releaseFlag(distTag: string, dir: string): string {
+function releaseFlag(distTag: string, dir: string, lone?: boolean): string {
   const run = step("tag", /^A GitHub Release per tag/)?.run;
   assert.ok(run, "positive control: the tag job has its Release step");
   const sandbox = mkdtempSync(join(tmpdir(), "release-flag-"));
@@ -183,7 +183,7 @@ function releaseFlag(distTag: string, dir: string): string {
     mkdirSync(join(sandbox, "carry"));
     writeFileSync(join(sandbox, "bin", "gh"), '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
     writeFileSync(join(sandbox, "bin", "node"), "#!/bin/sh\n", { mode: 0o755 });
-    writeFileSync(join(sandbox, "carry", "release.json"), JSON.stringify({ packages: [{ tag: "t@1.0.0", dir, version: "1.0.0" }] }));
+    writeFileSync(join(sandbox, "carry", "release.json"), JSON.stringify({ packages: [{ tag: "t@1.0.0", dir, version: "1.0.0", ...(lone === undefined ? {} : { lone }) }] }));
     const output = execFileSync("bash", ["-eo", "pipefail", "-c", run], {
       cwd: sandbox,
       encoding: "utf8",
@@ -203,4 +203,26 @@ test("the Release of the root package is --latest on latest, and is not on any o
 test("a package that is not the root is never marked latest, whatever the dist-tag", () => {
   assert.match(releaseFlag("latest", "packages/a"), / --latest=false$/);
   assert.match(releaseFlag("next", "packages/a"), / --latest=false$/);
+});
+
+// THE LONE PACKAGE BELOW THE ROOT (a11ign/a11ign#3966): the input is optional and empty by default, so a caller that sets nothing is unchanged, and
+// it reaches the version script by the one environment variable the script reads.
+test("lone-package-dir is an optional string input that defaults to empty, so a caller that names none is unchanged", () => {
+  const input = calledWorkflow.on?.workflow_call?.inputs?.["lone-package-dir"];
+  assert.ok(input, "the called workflow takes a lone-package-dir input");
+  assert.equal(input.type, "string");
+  assert.equal(input.required, false);
+  assert.equal(input.default, "");
+});
+
+test("the version step hands the input to the script as LONE_PACKAGE_DIR", () => {
+  const release = step("version", /^The release commit/);
+  assert.ok(release, "positive control: the version job has its release-commit step");
+  assert.equal(release.env?.LONE_PACKAGE_DIR, "${{ inputs.lone-package-dir }}");
+});
+
+test("the Release of a lone package below the root is --latest on latest only, and a package that is not lone never is", () => {
+  assert.match(releaseFlag("latest", "packages/lab", true), / --latest$/);
+  assert.match(releaseFlag("next", "packages/lab", true), / --latest=false$/);
+  assert.match(releaseFlag("latest", "packages/a", false), / --latest=false$/);
 });

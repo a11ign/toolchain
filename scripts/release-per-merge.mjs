@@ -13,13 +13,18 @@
 // that union. A package that was not released in a merge has its own tag from an earlier one, which is where its base comes from.
 // This reads the old version-pull-request regime too: the merge of a "Version packages" pull request deleted what it consumed.
 //
+// THE LONE PACKAGE NEED NOT BE AT THE ROOT (a11ign/a11ign#3966). A repository that releases as one thing (a tag `vx.y.z` consumers pin) may keep its
+// one versioned package in a subdirectory, in a layout with no workspace at the root (a11ign/lab: `packages/lab`, `private: true`). The caller names
+// that directory (`lone-package-dir`); the package there is tagged `vx.y.z` exactly as a root package is, and under `kind: tag` is released though
+// private. Where the caller names none, nothing here differs from before.
+//
 // WHAT IS REFUSED BEFORE A TAG EXISTS (parity with agent-org's own release, a11ign/a11ign#3964): a version that is not MAJOR.MINOR.PATCH, and a
 // package whose CHANGELOG.md has no entry for the version it moved to. Both throw in `buildRelease`, before the release commit, so the bundle never
 // leaves the `version` job: the `tag` job reads the same entry only to write the Release, and a tag with no Release is what this prevents.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
@@ -121,6 +126,26 @@ function latestTags(cwd) {
   return latest;
 }
 
+/**
+ * The caller's `lone-package-dir`, as the repository-relative directory `manifests` reports. Empty is no lone package below the root.
+ * @param {string | undefined} input @returns {string | null}
+ */
+export function loneDirOf(input) {
+  const named = (input ?? "").trim();
+  if (!named) return null;
+  const dir = posix.normalize(named).replace(/\/+$/, "") || ".";
+  if (dir.startsWith("/") || dir === ".." || dir.startsWith("../")) throw new Error(`lone-package-dir is '${named}'; it is a directory inside the repository`);
+  return dir;
+}
+
+/** The root package is the lone one until the caller names another directory, and then it is an ordinary package. @param {string} dir @param {string | null} loneDir */
+const isLone = (dir, loneDir) => dir === (loneDir ?? ".");
+
+/** A typo here would otherwise read as "the changesets move no releasable package", and a release that never happens says nothing. @param {string} cwd @param {string | null} loneDir */
+function refuseUnknownLoneDir(cwd, loneDir) {
+  if (loneDir !== null && !manifests(cwd).some(({ dir }) => dir === loneDir)) throw new Error(`lone-package-dir is '${loneDir}', and no package.json is tracked there`);
+}
+
 /** @param {string} cwd @param {string} file @param {(manifest: Record<string, unknown>) => void} edit */
 function editManifest(cwd, file, edit) {
   const manifest = JSON.parse(readFileSync(join(cwd, file), "utf8"));
@@ -131,13 +156,13 @@ function editManifest(cwd, file, edit) {
 /**
  * Put each tagged package back at its last release: that tag's version and that tag's changelog, so entries accumulate.
  * A package with no tag keeps what the merge has. Only the version is taken: the rest of package.json is this merge's.
- * @param {string} cwd @returns {Map<string, string>} each package's version after, by directory
+ * @param {{ cwd: string, loneDir: string | null }} options @returns {Map<string, string>} each package's version after, by directory
  */
-function rebaseOnLastTags(cwd) {
+function rebaseOnLastTags({ cwd, loneDir }) {
   const latest = latestTags(cwd);
   const versions = new Map();
   for (const { name, dir, version } of manifests(cwd)) {
-    const tagged = latest.get(name) ?? (dir === "." ? latest.get(null) : undefined);
+    const tagged = latest.get(name) ?? (isLone(dir, loneDir) ? latest.get(null) : undefined);
     const base = tagged?.version ?? version;
     if (tagged) {
       editManifest(cwd, join(dir, "package.json"), (manifest) => void (manifest.version = base));
@@ -156,21 +181,22 @@ function removeFiles(cwd, paths) {
 }
 
 /**
- * `kind: npm` never releases a private package. `kind: tag` has no registry to protect one from, so it releases the private package at the root:
- * the repository's own version (lab and control are `"private": true`, with `privatePackages: { version: true, tag: false }`).
- * @param {{ private: boolean, dir: string }} manifest @param {"npm" | "tag"} kind
+ * `kind: npm` never releases a private package. `kind: tag` has no registry to protect one from, so it releases the private lone package, at the root
+ * or where the caller named it (and then not at the root): the repository's own version (lab and control are `"private": true`, with `privatePackages: { version: true, tag: false }`).
+ * @param {{ private: boolean, dir: string }} manifest @param {{ kind: "npm" | "tag", loneDir: string | null }} options
  */
-const releasable = ({ private: isPrivate, dir }, kind) => !isPrivate || (kind === "tag" && dir === ".");
+const releasable = ({ private: isPrivate, dir }, { kind, loneDir }) => !isPrivate || (kind === "tag" && isLone(dir, loneDir));
 
 /**
- * @typedef {{ name: string, dir: string, version: string, tag: string }} ReleasedPackage
- * @param {{ cwd: string, before: Map<string, string>, kind: "npm" | "tag" }} versions @returns {ReleasedPackage[]}
+ * `lone` is what the tag job reads to mark the Release `--latest`: of several packages' Releases no one is "the" latest.
+ * @typedef {{ name: string, dir: string, version: string, tag: string, lone: boolean }} ReleasedPackage
+ * @param {{ cwd: string, before: Map<string, string>, kind: "npm" | "tag", loneDir: string | null }} versions @returns {ReleasedPackage[]}
  */
-function packagesThatMoved({ cwd, before, kind }) {
+function packagesThatMoved({ cwd, before, kind, loneDir }) {
   const after = manifests(cwd).filter(({ dir, version }) => before.get(dir) !== version);
   return after
-    .filter((manifest) => releasable(manifest, kind))
-    .map(({ name, dir, version }) => ({ name, dir, version, tag: dir === "." ? `v${version}` : `${name}@${version}` }));
+    .filter((manifest) => releasable(manifest, { kind, loneDir }))
+    .map(({ name, dir, version }) => ({ name, dir, version, lone: isLone(dir, loneDir), tag: isLone(dir, loneDir) ? `v${version}` : `${name}@${version}` }));
 }
 
 /**
@@ -190,20 +216,23 @@ function refuseUnreleasable(cwd, { name, dir, version }) {
 }
 
 /**
- * @param {{ cwd: string, changesetVersion: (cwd: string) => void, kind: "npm" | "tag", released?: (cwd: string) => Set<string> }} options
- *   `changesetVersion` runs `changeset version` (and refreshes the lockfile) in `cwd`. `kind` is the caller's, and decides whether a private root is released.
+ * @param {{ cwd: string, changesetVersion: (cwd: string) => void, kind: "npm" | "tag", released?: (cwd: string) => Set<string>, lonePackageDir?: string }} options
+ *   `changesetVersion` runs `changeset version` (and refreshes the lockfile) in `cwd`. `kind` is the caller's, and decides whether a private lone package is released.
+ *   `lonePackageDir` is the caller's `lone-package-dir`: the package there is tagged `vx.y.z` as a root package is.
  * @returns {{ released: false, reason: string } | { released: true, sha: string, packages: ReleasedPackage[] }}
  */
-export function buildRelease({ cwd, changesetVersion, kind, released }) {
+export function buildRelease({ cwd, changesetVersion, kind, released, lonePackageDir }) {
+  const loneDir = loneDirOf(lonePackageDir);
+  refuseUnknownLoneDir(cwd, loneDir);
   if (existsSync(join(cwd, ".changeset", "pre.json"))) throw new Error("pre-release mode (.changeset/pre.json) is not supported: every tag here is a plain x.y.z");
   const { present, unreleased } = unreleasedChangesets({ cwd, released });
   if (unreleased.length === 0) return { released: false, reason: "no changeset that no tag has consumed" };
-  const before = rebaseOnLastTags(cwd);
+  const before = rebaseOnLastTags({ cwd, loneDir });
   // The already-released go before `changeset version`, so it consumes the unreleased alone; the commit then holds NONE, which is what the next run reads.
   removeFiles(cwd, present.filter((path) => !unreleased.includes(path)));
   changesetVersion(cwd);
   removeFiles(cwd, presentChangesets(cwd));
-  const packages = packagesThatMoved({ cwd, before, kind });
+  const packages = packagesThatMoved({ cwd, before, kind, loneDir });
   if (packages.length === 0) return { released: false, reason: "the changesets move no releasable package's version" };
   for (const released of packages) refuseUnreleasable(cwd, released);
   git(cwd, ["add", "-A"]);
@@ -272,7 +301,7 @@ function main() {
   }
   if (command === "setup") return setOutputs(pnpmSetup({ cwd, pnpmVersion: process.env.PNPM_VERSION ?? "" }));
   if (command === "version") {
-    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi, kind: kindOf(process.env.KIND) });
+    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi, kind: kindOf(process.env.KIND), lonePackageDir: process.env.LONE_PACKAGE_DIR });
     if (!result.released) return setOutputs({ released: "false", reason: result.reason });
     const manifest = join(process.env.RUNNER_TEMP ?? tmpdir(), "release.json");
     writeFileSync(manifest, `${JSON.stringify(result, null, 2)}\n`);
