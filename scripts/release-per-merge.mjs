@@ -12,6 +12,10 @@
 // commit; the UNION of what those commits deleted is what has been released, and what is unreleased is the present files minus
 // that union. A package that was not released in a merge has its own tag from an earlier one, which is where its base comes from.
 // This reads the old version-pull-request regime too: the merge of a "Version packages" pull request deleted what it consumed.
+//
+// WHAT IS REFUSED BEFORE A TAG EXISTS (parity with agent-org's own release, a11ign/a11ign#3964): a version that is not MAJOR.MINOR.PATCH, and a
+// package whose CHANGELOG.md has no entry for the version it moved to. Both throw in `buildRelease`, before the release commit, so the bundle never
+// leaves the `version` job: the `tag` job reads the same entry only to write the Release, and a tag with no Release is what this prevents.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -152,22 +156,45 @@ function removeFiles(cwd, paths) {
 }
 
 /**
- * @typedef {{ name: string, dir: string, version: string, tag: string }} ReleasedPackage
- * @param {{ cwd: string, before: Map<string, string> }} versions @returns {ReleasedPackage[]}
+ * `kind: npm` never releases a private package. `kind: tag` has no registry to protect one from, so it releases the private package at the root:
+ * the repository's own version (lab and control are `"private": true`, with `privatePackages: { version: true, tag: false }`).
+ * @param {{ private: boolean, dir: string }} manifest @param {"npm" | "tag"} kind
  */
-function packagesThatMoved({ cwd, before }) {
+const releasable = ({ private: isPrivate, dir }, kind) => !isPrivate || (kind === "tag" && dir === ".");
+
+/**
+ * @typedef {{ name: string, dir: string, version: string, tag: string }} ReleasedPackage
+ * @param {{ cwd: string, before: Map<string, string>, kind: "npm" | "tag" }} versions @returns {ReleasedPackage[]}
+ */
+function packagesThatMoved({ cwd, before, kind }) {
   const after = manifests(cwd).filter(({ dir, version }) => before.get(dir) !== version);
   return after
-    .filter((manifest) => !manifest.private)
+    .filter((manifest) => releasable(manifest, kind))
     .map(({ name, dir, version }) => ({ name, dir, version, tag: dir === "." ? `v${version}` : `${name}@${version}` }));
 }
 
 /**
- * @param {{ cwd: string, changesetVersion: (cwd: string) => void, released?: (cwd: string) => Set<string> }} options
- *   `changesetVersion` runs `changeset version` (and refreshes the lockfile) in `cwd`.
+ * Refuses a package that would be tagged without a Release to go with it. The tag is a promise the host acts on (`update-tool` moves to it), so a tag
+ * whose notes cannot be written is worse than no release.
+ * @param {string} cwd @param {ReleasedPackage} released
+ */
+function refuseUnreleasable(cwd, { name, dir, version }) {
+  if (!SEMVER.test(version)) throw new Error(`${name}: version '${version}' is not MAJOR.MINOR.PATCH, so no tag is cut`);
+  const path = join(cwd, dir, "CHANGELOG.md");
+  if (!existsSync(path)) throw new Error(`${name}: ${join(dir, "CHANGELOG.md")} does not exist, so ${version} has no release notes`);
+  try {
+    changelogEntry(readFileSync(path, "utf8"), version);
+  } catch (error) {
+    throw new Error(`${name}: ${/** @type {Error} */ (error).message}`, { cause: error });
+  }
+}
+
+/**
+ * @param {{ cwd: string, changesetVersion: (cwd: string) => void, kind: "npm" | "tag", released?: (cwd: string) => Set<string> }} options
+ *   `changesetVersion` runs `changeset version` (and refreshes the lockfile) in `cwd`. `kind` is the caller's, and decides whether a private root is released.
  * @returns {{ released: false, reason: string } | { released: true, sha: string, packages: ReleasedPackage[] }}
  */
-export function buildRelease({ cwd, changesetVersion, released }) {
+export function buildRelease({ cwd, changesetVersion, kind, released }) {
   if (existsSync(join(cwd, ".changeset", "pre.json"))) throw new Error("pre-release mode (.changeset/pre.json) is not supported: every tag here is a plain x.y.z");
   const { present, unreleased } = unreleasedChangesets({ cwd, released });
   if (unreleased.length === 0) return { released: false, reason: "no changeset that no tag has consumed" };
@@ -176,8 +203,9 @@ export function buildRelease({ cwd, changesetVersion, released }) {
   removeFiles(cwd, present.filter((path) => !unreleased.includes(path)));
   changesetVersion(cwd);
   removeFiles(cwd, presentChangesets(cwd));
-  const packages = packagesThatMoved({ cwd, before });
-  if (packages.length === 0) return { released: false, reason: "the changesets move no public package's version" };
+  const packages = packagesThatMoved({ cwd, before, kind });
+  if (packages.length === 0) return { released: false, reason: "the changesets move no releasable package's version" };
+  for (const released of packages) refuseUnreleasable(cwd, released);
   git(cwd, ["add", "-A"]);
   git(cwd, [...COMMITTER, "commit", "-q", "-m", `Release ${packages.map(({ tag }) => tag).join(", ")}`]);
   return { released: true, sha: git(cwd, ["rev-parse", "HEAD"]).trim(), packages };
@@ -196,11 +224,37 @@ export function changelogEntry(changelog, version) {
   return `${text}\n`;
 }
 
-/** @param {string} cwd */
+/**
+ * A repository with a lockfile has installed (the workflow ran `pnpm install --frozen-lockfile`) and runs its own `changeset`. One with none (agent-org:
+ * no lockfile, no `packageManager`, `@changesets/cli` not a dependency) installed nothing, so the CLI is fetched at the version the caller names.
+ * @param {string} cwd
+ */
 function changesetVersionInCi(cwd) {
+  if (!existsSync(join(cwd, "pnpm-lock.yaml"))) {
+    const cli = process.env.CHANGESETS_VERSION ?? "";
+    if (!SEMVER.test(cli)) throw new Error(`CHANGESETS_VERSION is '${cli}'; a repository with no lockfile runs \`pnpm dlx @changesets/cli@<version>\`, and the version is MAJOR.MINOR.PATCH`);
+    return void execFileSync("pnpm", ["dlx", `@changesets/cli@${cli}`, "version"], { cwd, stdio: "inherit" });
+  }
   execFileSync("pnpm", ["exec", "changeset", "version"], { cwd, stdio: "inherit" });
   // `changeset version` leaves the lockfile; a frozen install of the release commit needs it to agree with the manifests.
-  if (existsSync(join(cwd, "pnpm-lock.yaml"))) execFileSync("pnpm", ["install", "--lockfile-only"], { cwd, stdio: "inherit" });
+  execFileSync("pnpm", ["install", "--lockfile-only"], { cwd, stdio: "inherit" });
+}
+
+/**
+ * What `pnpm/action-setup` and `actions/setup-node` need to be given. The action refuses a `version` beside a `packageManager` that differs, so it is
+ * given the input only where there is no `packageManager`; `cache: pnpm` fails on a missing lockfile, so it is given only where there is one.
+ * @param {{ cwd: string, pnpmVersion: string }} options @returns {{ "pnpm-version": string, cache: string }}
+ */
+export function pnpmSetup({ cwd, pnpmVersion }) {
+  const { packageManager } = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
+  if (!packageManager && !pnpmVersion) throw new Error("package.json has no packageManager and the pnpm-version input is empty, so pnpm/action-setup has no version to install");
+  return { "pnpm-version": packageManager ? "" : pnpmVersion, cache: existsSync(join(cwd, "pnpm-lock.yaml")) ? "pnpm" : "" };
+}
+
+/** @param {string | undefined} kind @returns {"npm" | "tag"} */
+function kindOf(kind) {
+  if (kind !== "npm" && kind !== "tag") throw new Error(`KIND is '${kind}'; it is npm or tag`);
+  return kind;
 }
 
 /** @param {Record<string, string>} outputs */
@@ -216,15 +270,16 @@ function main() {
     const { unreleased } = unreleasedChangesets({ cwd });
     return setOutputs({ count: String(unreleased.length) });
   }
+  if (command === "setup") return setOutputs(pnpmSetup({ cwd, pnpmVersion: process.env.PNPM_VERSION ?? "" }));
   if (command === "version") {
-    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi });
+    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi, kind: kindOf(process.env.KIND) });
     if (!result.released) return setOutputs({ released: "false", reason: result.reason });
     const manifest = join(process.env.RUNNER_TEMP ?? tmpdir(), "release.json");
     writeFileSync(manifest, `${JSON.stringify(result, null, 2)}\n`);
     return setOutputs({ released: "true", sha: result.sha, manifest });
   }
   if (command === "notes") return process.stdout.write(changelogEntry(readFileSync(join(cwd, rest[0], "CHANGELOG.md"), "utf8"), rest[1]));
-  throw new Error(`unknown command '${command}': plan, version or notes`);
+  throw new Error(`unknown command '${command}': plan, setup, version or notes`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
