@@ -193,6 +193,17 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ steps.setup.outputs.cache }}
+      - name: Install, which runs the caller's code and so holds no token
+        if: steps.plan.outputs.count != '0'
+        run: if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
+      # THE TIP, READ AS LATE AS THE VERSION JOB CAN (a11ign/a11ign#4010). `actions/checkout` set `origin/main` to the pushed sha, which is the
+      # merge being released and not the tip. GitHub compares a pushed commit's `.github/workflows` against the tip, so the release commit takes
+      # the tip's. The token is in the URL, where the runner masks it, for this one fetch, after the caller's code has run.
+      - name: The tip of the default branch, for the workflows the release commit takes
+        if: steps.plan.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git fetch --quiet "https://x-access-token:${GH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git" +refs/heads/main:refs/remotes/tip/main
       - name: The release commit, on top of this merge and on no branch
         id: release
         if: steps.plan.outputs.count != '0'
@@ -200,10 +211,10 @@ jobs:
           KIND: ${{ inputs.kind }}
           CHANGESETS_VERSION: ${{ inputs.changesets-version }}
           LONE_PACKAGE_DIR: ${{ inputs.lone-package-dir }}
+          TIP: refs/remotes/tip/main
         # `bash` is `bash -eo pipefail`; the default `bash -e` has no pipefail, so `script | tee` took `tee`'s status and a script that died read as success (#3766).
         shell: bash
         run: |
-          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
           git switch --detach
           node .release-tool/scripts/release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Carry the release commit to the jobs after this one, as a bundle
@@ -314,6 +325,14 @@ jobs:
             echo "::error::the bundle holds $(git rev-parse HEAD), not the release commit $SHA the version job built"
             exit 1
           fi
+      # The tip may have moved its workflows since the version job built the commit, and GitHub's refusal of that push says "workflows
+      # permission", which sends a reader after a credential. This says what happened (a11ign/a11ign#4010) and pushes nothing.
+      - name: The tip's workflows are the release commit's, or no tag is pushed
+        env:
+          TIP: refs/remotes/origin/main
+        run: |
+          git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
+          node .release-tool/scripts/release-per-merge.mjs check-workflows
       - name: Push the tags, one atomic push, never forced
         env:
           SHA: ${{ needs.version.outputs.sha }}

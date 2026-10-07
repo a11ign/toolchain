@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets } from "./release-per-merge.mjs";
+import { assertWorkflowsHeld, buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets, workflowsTree } from "./release-per-merge.mjs";
 
 // WHAT THIS PINS, AND HOW IT READS THE WORKFLOW. `release-per-merge.yml` is read as YAML and judged on STRUCTURE (keys, permissions, `needs`,
 // `if`), never on words: the file's comments explain WHY in the very words a text match would find. The version logic is not read at all:
@@ -422,4 +422,99 @@ test("tag names, empty changesets and changelog entries read as changesets write
   assert.equal(namesARelease("---\n---\n"), false);
   assert.equal(changelogEntry("# a\n\n## 1.1.0\n\n- new\n\n## 1.0.0\n\n- old\n", "1.1.0"), "- new\n");
   assert.throws(() => changelogEntry("# a\n\n## 1.0.0\n\n- old\n", "1.1.0"), /no entry for 1\.1\.0/);
+});
+
+// ---- the tip's workflows, so GitHub reads no workflow change in the pushed commit (a11ign/a11ign#4010) -----------------------------------
+
+const WORKFLOW_FILE = ".github/workflows/ci.yml";
+
+/** The merge being released has `ci.yml` as `before`; `main` then moves on by one more merge (the tip) that rewrites it as `after`, or removes the directory. */
+function releasedBehindATip(root: string, tip: { after: string } | "removed" | "unchanged"): string {
+  write(root, WORKFLOW_FILE, "name: before\n");
+  changeset(root, "one", { a: "minor" });
+  git(root, "branch", "tip");
+  git(root, "switch", "-q", "tip");
+  if (tip === "removed") git(root, "rm", "-q", WORKFLOW_FILE);
+  else if (tip !== "unchanged") write(root, WORKFLOW_FILE, tip.after);
+  commit(root, "a merge that touched the workflows after the one being released");
+  git(root, "switch", "-q", "main");
+  return "tip";
+}
+
+/** `cut`, with the tip named, and the release commit it made. */
+function cutWithTip(root: string, tip: string) {
+  git(root, "checkout", "-q", "--detach");
+  try {
+    const result = buildRelease({ cwd: root, changesetVersion, kind: "npm", tip });
+    assert.ok(result.released, "positive control: a release was made, so the reads below are of a release commit and not of nothing");
+    return result.sha;
+  } finally {
+    git(root, "checkout", "-q", "-f", "main");
+  }
+}
+
+test("a release commit takes the tip's workflows, so GitHub reads no workflow change, while its parent stays the merge released", () => {
+  inScratch((root) => {
+    const tip = releasedBehindATip(root, { after: "name: after\n" });
+    const released = git(root, "rev-parse", "main").trim();
+    const sha = cutWithTip(root, tip);
+    assert.equal(git(root, "show", `${sha}:${WORKFLOW_FILE}`), "name: after\n", "the tip's workflow file, not the merge released's");
+    assert.equal(workflowsTree(root, sha), workflowsTree(root, tip), "the same directory object, which is what GitHub compares");
+    assert.equal(git(root, "rev-parse", `${sha}^`).trim(), released, "the parent is still the merge released");
+    assert.equal(versionOf(root, sha, "a"), "1.1.0", "the versions are still written");
+    assert.deepEqual(git(root, "diff", "--name-only", "--diff-filter=D", `${sha}^`, sha, "--", ".changeset").split("\n").filter(Boolean), [".changeset/one.md"], "what the release consumed is still read off its deletions");
+  });
+});
+
+test("without a tip the release commit keeps the workflows of the merge released, and a tip that agrees changes nothing", () => {
+  inScratch((root) => {
+    releasedBehindATip(root, { after: "name: after\n" });
+    const { result } = cut(root);
+    assert.ok(result.released, "positive control");
+    assert.equal(git(root, "show", `${result.sha}:${WORKFLOW_FILE}`), "name: before\n", "no tip, no graft");
+  });
+  inScratch((root) => {
+    const tip = releasedBehindATip(root, "unchanged");
+    const sha = cutWithTip(root, tip);
+    assert.equal(git(root, "show", `${sha}:${WORKFLOW_FILE}`), "name: before\n");
+    assert.equal(git(root, "rev-list", "--count", `${sha}^..${sha}`).trim(), "1", "one commit, amended in place or not at all");
+  });
+});
+
+test("a tip with no workflows directory removes it from the release commit", () => {
+  inScratch((root) => {
+    const tip = releasedBehindATip(root, "removed");
+    assert.equal(workflowsTree(root, tip), "", "positive control: the tip really has none");
+    const sha = cutWithTip(root, tip);
+    assert.equal(workflowsTree(root, sha), "");
+  });
+});
+
+test("the tag job's check refuses, in words, a release commit whose workflows the tip has moved, and passes one whose they are", () => {
+  inScratch((root) => {
+    const tip = releasedBehindATip(root, { after: "name: after\n" });
+    const grafted = cutWithTip(root, tip);
+    assert.doesNotThrow(() => assertWorkflowsHeld({ cwd: root, commit: grafted, tip }));
+    git(root, "switch", "-q", "tip");
+    write(root, WORKFLOW_FILE, "name: moved again\n");
+    commit(root, "the workflows move while the release runs");
+    assert.throws(() => assertWorkflowsHeld({ cwd: root, commit: grafted, tip }), /moved on the default branch after this release commit was built.*no tag is pushed/);
+  });
+});
+
+test("the workflow reads the tip after the caller's code has run, hands it to the version step, and checks it before the tags are pushed", () => {
+  const { jobs } = real();
+  const versionSteps = jobs.version.steps ?? [];
+  const index = (steps: Step[], pattern: RegExp): number => steps.findIndex((step) => pattern.test(step.run ?? ""));
+  const install = index(versionSteps, /pnpm install/);
+  const fetchTip = index(versionSteps, /git fetch .*refs\/heads\/main:refs\/remotes\/tip\/main/);
+  const release = index(versionSteps, /release-per-merge\.mjs version/);
+  assert.ok(install >= 0 && fetchTip >= 0 && release >= 0, "positive control: the three steps were found");
+  assert.ok(install < fetchTip && fetchTip < release, "the tip is read after the install (which runs the caller's code) and before the release commit");
+  assert.equal((versionSteps[release] as { env?: Record<string, string> }).env?.TIP, "refs/remotes/tip/main", "the version step is told where the tip is");
+  assert.equal(versionSteps[install].run?.includes("TOKEN"), false, "the step that runs the caller's code holds no token");
+  const tagSteps = jobs.tag.steps ?? [];
+  const check = index(tagSteps, /release-per-merge\.mjs check-workflows/);
+  const push = index(tagSteps, /\bgit push\b/);
+  assert.ok(check >= 0 && push >= 0 && check < push, "the tag job checks the tip's workflows before it pushes");
 });
