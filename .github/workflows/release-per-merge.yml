@@ -54,6 +54,11 @@ on:
         required: false
         type: string
         default: "22"
+      dist-tag:
+        description: "The npm dist-tag the packages are published under (`latest`, or a channel such as `next`). It only names the tag the registry gets: the tags, the gates and the OIDC publish are the same, and a Release for any tag but `latest` is not marked the latest Release."
+        required: false
+        type: string
+        default: latest
 
 permissions:
   contents: read
@@ -226,9 +231,10 @@ jobs:
       - name: Refuse unless the config says public
         run: node -e 'const c=require("./.changeset/config.json"); if (c.access !== "public") { console.error("access is " + c.access); process.exit(1) }'
       # `changeset publish` skips a version the registry already has, which is what lets a failed release run again. Its own local tags are
-      # never pushed from here: this job holds no write permission.
+      # never pushed from here: this job holds no write permission. Without `--tag` changesets passes `--tag latest` itself (it reads no
+      # `publishConfig.tag`), so the caller's `dist-tag` is the only way to publish to another one.
       - name: Publish
-        run: pnpm exec changeset publish
+        run: pnpm exec changeset publish --tag ${{ inputs.dist-tag }}
         env:
           NPM_CONFIG_PROVENANCE: "true"
 
@@ -287,14 +293,16 @@ jobs:
       - name: A GitHub Release per tag, its notes the changelog entry the version wrote
         env:
           GH_TOKEN: ${{ github.token }}
+          DIST_TAG: ${{ inputs.dist-tag }}
         # Under pipefail so a `jq` that fails ends the step red instead of feeding the loop nothing and cutting no Release.
         shell: bash
         run: |
           jq -r '.packages[] | [.tag, .dir, .version] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version; do
             node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
-            # `--latest` only for the lone root package: of several packages' Releases no one is "the" latest.
+            # `--latest` only for the lone root package: of several packages' Releases no one is "the" latest. And only on the `latest` dist-tag:
+            # a Release for any other is a channel's, and must not displace the Release people are sent to.
             latest=--latest=false
-            [ "$dir" = . ] && latest=--latest
+            [ "$dir" = . ] && [ "$DIST_TAG" = latest ] && latest=--latest
             gh release create "$tag" --verify-tag --title "$tag" --notes-file "$RUNNER_TEMP/notes.md" "$latest"
             echo "cut $tag at $(git rev-parse HEAD), on top of $GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
           done

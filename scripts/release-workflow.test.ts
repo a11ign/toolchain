@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parse } from "yaml";
 
 // THE RELEASE WORKFLOW IS READ AS YAML, never as words (a11ign/a11ign#3713): a comment that explains why there is no `workflow_dispatch`
@@ -144,4 +147,60 @@ test("the publishing job of the called workflow holds id-token: write and runs i
   assert.ok(publish, "positive control: the called workflow has a publish job");
   assert.equal(publish.environment, "npm-publish");
   assert.equal(publish.permissions?.["id-token"], "write");
+});
+
+// THE DIST-TAG A CALLER NAMES (a11ign/a11ign#3945): changesets passes `--tag latest` itself when none is given, so without the flag a push
+// can only publish to `latest`. The input defaults to `latest`, so a caller that names no tag publishes exactly as before.
+type CalledWorkflow = {
+  on?: { workflow_call?: { inputs?: Record<string, { default?: string; type?: string; required?: boolean; description?: string }> } };
+  jobs?: Record<string, { steps?: (Step & { name?: string; env?: Record<string, string> })[] }>;
+};
+const calledWorkflow = called as CalledWorkflow;
+const step = (job: string, name: RegExp) => calledWorkflow.jobs?.[job]?.steps?.find((s) => name.test(s.name ?? ""));
+
+test("dist-tag is an optional string input that defaults to latest, so a caller that names none publishes as before", () => {
+  const input = calledWorkflow.on?.workflow_call?.inputs?.["dist-tag"];
+  assert.ok(input, "the called workflow takes a dist-tag input");
+  assert.equal(input.type, "string");
+  assert.equal(input.required, false);
+  assert.equal(input.default, "latest");
+  assert.match(input.description ?? "", /only names the tag the registry gets/);
+});
+
+test("the Publish step carries --tag with the dist-tag input", () => {
+  const publish = step("publish", /^Publish$/);
+  assert.ok(publish, "positive control: the publish job has its Publish step");
+  assert.match(publish.run ?? "", /^pnpm exec changeset publish --tag \$\{\{ inputs\.dist-tag \}\}$/);
+});
+
+// The Release script is run as written, with a stub `gh`, so what is read is the flag `gh release create` is given and not the words around it.
+function releaseFlag(distTag: string, dir: string): string {
+  const run = step("tag", /^A GitHub Release per tag/)?.run;
+  assert.ok(run, "positive control: the tag job has its Release step");
+  const sandbox = mkdtempSync(join(tmpdir(), "release-flag-"));
+  try {
+    mkdirSync(join(sandbox, "bin"));
+    mkdirSync(join(sandbox, "carry"));
+    writeFileSync(join(sandbox, "bin", "gh"), '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
+    writeFileSync(join(sandbox, "bin", "node"), "#!/bin/sh\n", { mode: 0o755 });
+    writeFileSync(join(sandbox, "carry", "release.json"), JSON.stringify({ packages: [{ tag: "t@1.0.0", dir, version: "1.0.0" }] }));
+    const output = execFileSync("bash", ["-eo", "pipefail", "-c", run], {
+      cwd: sandbox,
+      encoding: "utf8",
+      env: { PATH: `${join(sandbox, "bin")}:${process.env.PATH}`, RUNNER_TEMP: sandbox, GITHUB_STEP_SUMMARY: "/dev/null", GITHUB_SHA: "x", DIST_TAG: distTag },
+    });
+    return output.split("\n").find((line) => line.startsWith("release create")) ?? "";
+  } finally {
+    rmSync(sandbox, { recursive: true });
+  }
+}
+
+test("the Release of the root package is --latest on latest, and is not on any other dist-tag", () => {
+  assert.match(releaseFlag("latest", "."), / --latest$/);
+  assert.match(releaseFlag("next", "."), / --latest=false$/);
+});
+
+test("a package that is not the root is never marked latest, whatever the dist-tag", () => {
+  assert.match(releaseFlag("latest", "packages/a"), / --latest=false$/);
+  assert.match(releaseFlag("next", "packages/a"), / --latest=false$/);
 });
