@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { decide, parseReleasablePaths } from "./changeset-required.mjs";
+import { decide, noReleaseReason, parseReleasablePaths } from "./changeset-required.mjs";
 
 // WHAT THIS PINS (a11ign/a11ign#4127). `changeset-required.mjs` holds the DECISION (files, body and paths in; verdict and reason out), so the
 // cases below RUN it, over the real file lists of screenreader-worker#25 and #26. The two workflows are read as YAML and judged on STRUCTURE
@@ -35,6 +35,26 @@ test("a releasable change with no changeset and no no-release line fails", () =>
     assert.equal(ok, false);
     assert.match(reason, /\.changeset/);
     assert.match(reason, /no-release:/);
+  }
+});
+
+// THE COPY'S TABLE (a11ign/agent-org#402, a11ign/a11ign#4128). `src/release-behind-main.mjs` in a11ign/agent-org restates `TEST_FILE`, the releasable-path prefix test, `NO_RELEASE_LINE`
+// and `PLACEHOLDER` as `isShipped` and `noReleaseReason`, and pins them with these same cases in its `release-behind-main.test.ts` ("the predicate agrees with the gate's"). Change a case
+// here and the other file's table moves with it; the message of each assertion names that file so the red test says where the other copy is. `shipped` is not exported, so it is read
+// through `decide`: a lone file with no changeset and no body fails exactly when it is shipped. agent-org's catch-all-prefix rows have no counterpart, `parseReleasablePaths` refusing an empty path.
+const COPY = "src/release-behind-main.mjs in a11ign/agent-org";
+const PEER_PATHS = ["src/", "packages/nvda-speech/"];
+const SHIPPED: [string, boolean][] = [["src/a.ts", true], ["src/a/b.mjs", true], ["packages/nvda-speech/x.ts", true], ["src/a.test.ts", false], ["src/a.spec.js", false],
+  ["src/a.test", true], ["src/atest.ts", true], ["lib/a.ts", false], ["srcs/a.ts", false], [".changeset/a.md", false], ["docs/src/a.ts", false]];
+const REASONS: [string, string | null][] = [["no-release: a refactor", "a refactor"], ["  no-release:   x  ", "x"], ["a\r\nno-release: crlf\r\nb", "crlf"], ["no-release:", null],
+  ["no-release: <reason>", null], ["NO-RELEASE: x", null], ["see no-release: x", null], ["no-release:\nno-release: second", "second"], ["", null]];
+
+test("the four rules agree with the copy in agent-org's release-behind-main, case for case", () => {
+  for (const [path, expected] of SHIPPED) {
+    assert.equal(!verdict(added(path), { paths: PEER_PATHS.join(" ") }).ok, expected, `${path}: ${COPY} must change with this`);
+  }
+  for (const [body, expected] of REASONS) {
+    assert.equal(noReleaseReason(body), expected, `${JSON.stringify(body)}: ${COPY} must change with this`);
   }
 });
 

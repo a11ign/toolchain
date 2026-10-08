@@ -15,6 +15,11 @@
 // there would clear the check and release nothing.
 // A RENAME COUNTS BOTH WAYS for the releasable test (moving code out of `src/` is a change to what ships), and as an addition only when it comes
 // from outside `.changeset/`.
+//
+// FOUR RULES HERE ARE COPIED, NOT SHARED: `TEST_FILE`, the releasable-path prefix test (`shipped`), `NO_RELEASE_LINE` and `PLACEHOLDER`. The copy is `isShipped` and
+// `noReleaseReason` in `src/release-behind-main.mjs` of a11ign/agent-org (a11ign/agent-org#402, a11ign/a11ign#4128), which restates them to read a commit on `main` where this reads a pull
+// request's diff. A runtime dependency of the gate on a CI script was rejected there, so nothing links the two but a case table on each side: this file's is "the four rules agree with
+// agent-org's `release-behind-main`" in `changeset-required.test.ts`. A change to one of the four goes red there, and moves that file's table in agent-org with it.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
