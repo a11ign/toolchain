@@ -103,6 +103,22 @@ layout-check: FAIL [directory-name] packages/pdf: packages/pdf holds @a11ign/doc
 From code, `checkLayout({ root })` and `checkLayoutTree({ "path": "text" })` (a tree listing, with text only for `package.json`, `pnpm-workspace.yaml` and `lerna.json`) return `{ ok, problems: [{ check, path, message }], message, fileCount }`.
 It does not read `lerna.json`'s own `packages` as a workspace, and it does not yet read a README sentence as the allowance for a stated departure (ADR 0043).
 
+## The JS-to-TS conversion
+
+JSDoc source becomes TypeScript by a script, and an agent fixes only what the script reports as residue (ADR 0043). **The one line** (run it from the repository root; it needs `typescript` 6.x, which the repository already has):
+
+```
+npx --yes --package @a11ign/toolchain js-to-ts [directory] [--exclude <path>]... [--dry-run] [--json]
+```
+
+It renames every `.mjs`/`.cjs`/`.js` source outside `node_modules`, `dist` and `build` to `.ts` (`git mv`, so history follows), applies TypeScript's `annotateWithTypeFromJSDoc` fix to each (an optional `@param {T} [x]` becomes `x?: T`), rewrites every path that names a renamed file to its new name (an import becomes `./x.ts`), runs the repository's own `tsc --noEmit`, and prints the **residue**: each file still failing, with its error codes and counts. Chosen over `ts-migrate`, which writes `x: any` for every parameter so the project typechecks and the types are gone (measured 2026-10-09 in the source header).
+
+- `--exclude <path>` (repeatable; a file or a directory) leaves it alone and lists it as skipped: use it for a file a deployed unit or an Ansible task names by path.
+- `--dry-run` writes nothing and says what it would rename.
+- Files edited OUTSIDE the converted set are printed: they are the pull request's `Outside-Region:` lines. A reference it did not rewrite (a bare name that may be another file, a path inside a template literal, a `CHANGELOG`) is printed too.
+- A second run changes nothing and reports the same residue. Exit `0` clean, `1` residue remains, `2` nothing could be read or a misspelt flag; an empty tree is `2`, never a pass.
+- TypeScript 7 has no JavaScript API (a11ign/a11ign#3729), so under it the command refuses with that sentence. A `@typedef` or an untyped parameter is not converted; it is residue (`TS2304`, `TS7006`).
+
 ## The TypeScript base
 
 ```json

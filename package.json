@@ -42,10 +42,15 @@
       "types": "./dist/layout-check.d.ts",
       "default": "./dist/layout-check.mjs"
     },
+    "./js-to-ts": {
+      "types": "./dist/js-to-ts.d.ts",
+      "default": "./dist/js-to-ts.mjs"
+    },
     "./tsconfig.base.json": "./tsconfig.base.json"
   },
   "bin": {
-    "layout-check": "./dist/layout-check.mjs"
+    "layout-check": "./dist/layout-check.mjs",
+    "js-to-ts": "./dist/js-to-ts.mjs"
   },
   "files": [
     "dist",
@@ -60,13 +65,17 @@
   "peerDependencies": {
     "@rslib/core": "^1.0.3",
     "@rstest/core": "^0.12.3",
-    "@rstest/coverage-v8": "^0.12.3"
+    "@rstest/coverage-v8": "^0.12.3",
+    "typescript": "^6.0.3"
   },
   "peerDependenciesMeta": {
     "@rslib/core": {
       "optional": true
     },
     "@rstest/coverage-v8": {
+      "optional": true
+    },
+    "typescript": {
       "optional": true
     }
   },
