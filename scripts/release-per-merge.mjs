@@ -154,6 +154,17 @@ function refuseUnknownLoneDir(cwd, loneDir) {
   if (loneDir !== null && !manifests(cwd).some(({ dir }) => dir === loneDir)) throw new Error(`lone-package-dir is '${loneDir}', and no package.json is tracked there`);
 }
 
+/**
+ * The tag a package's next version is counted from: the HIGHEST of every tag that can be its own, the one under its name and, for the lone package, the `v<version>` one.
+ * A root package that sat in a workspace and now stands alone carries both forms, and taking the named one first reads the older (a11ign/a11ign#4121: `@a11ign/screenreader-worker@0.2.0`
+ * hid `v0.3.0`, so the next minor was the 0.3.0 that exists). A repository with one form has one candidate, and the answer is unchanged.
+ * @param {Map<string | null, { tag: string, version: string }>} latest @param {{ name: string, dir: string }} pkg @param {string | null} loneDir
+ */
+function baseTag(latest, { name, dir }, loneDir) {
+  const candidates = [latest.get(name), isLone(dir, loneDir) ? latest.get(null) : undefined].filter((tagged) => tagged !== undefined);
+  return candidates.reduce((best, next) => (compareVersions(next.version, best.version) > 0 ? next : best), candidates[0]);
+}
+
 /** @param {string} cwd @param {string} file @param {(manifest: Record<string, unknown>) => void} edit */
 function editManifest(cwd, file, edit) {
   const before = readFileSync(join(cwd, file), "utf8");
@@ -176,7 +187,7 @@ const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies"
 function movedPins(cwd, latest, loneDir) {
   const moved = new Map();
   for (const { name, dir, version } of manifests(cwd)) {
-    const to = (latest.get(name) ?? (isLone(dir, loneDir) ? latest.get(null) : undefined))?.version;
+    const to = baseTag(latest, { name, dir }, loneDir)?.version;
     if (to && to !== version) moved.set(name, { from: version, to });
   }
   return moved;
@@ -203,7 +214,7 @@ function rebaseOnLastTags({ cwd, loneDir }) {
   const moved = movedPins(cwd, latest, loneDir);
   const versions = new Map();
   for (const { name, dir, version } of manifests(cwd)) {
-    const tagged = latest.get(name) ?? (isLone(dir, loneDir) ? latest.get(null) : undefined);
+    const tagged = baseTag(latest, { name, dir }, loneDir);
     const base = tagged?.version ?? version;
     editManifest(cwd, join(dir, "package.json"), (manifest) => {
       if (tagged) manifest.version = base;
