@@ -77,6 +77,32 @@ check reads the same in a checkout and in a copy laid under another project. A t
 - At zero, `files` is `[]` and **any** such file fails: no standing allowance but the named exceptions.
 - `writeLoweredBaseline({ from })` rewrites the baseline to what the tree holds now, and **throws instead of raising** it. A repository adds it as a script, e.g. `"mjs-ratchet:lower": "tsx -e \"import { writeLoweredBaseline } from '@a11ign/toolchain/mjs-ratchet'; console.log(writeLoweredBaseline({ from: process.cwd() }))\""`; this repository's is `pnpm run mjs-ratchet:lower`.
 
+## The layout check
+
+A single-package repository has its package at the ROOT (one README, one `package.json`, no workspace file); a multi-package repository exists only when it **publishes** more than one package, each directory named for its package (ADR 0043, Decision 7). The check fails on exactly four things and prints WHICH, with the path:
+
+| Check | Fails on |
+|---|---|
+| `workspace-of-one` | a `pnpm-workspace.yaml` (or `workspaces` field) whose members are one package, counting the root when the file names it. A private `*-workspace` root is a shell, not a package, and a private member beside one published package does not make a multi-package repository |
+| `directory-name` | a workspace member whose directory is not the part of its package name after the scope (`packages/pdf` holding `@a11ign/documents`) |
+| `second-readme` | a root README and `<member>/README.md` for one package (same name, or a shell root over a single member). A README in a SUBDIRECTORY documents a part and is never read |
+| `leftover` | a `lerna.json`, or a private `*-workspace` root `package.json` that holds fewer than two published packages |
+
+**The one line a consumer's `ci.yml` runs** (exit `0` clean, `1` a layout failure, `2` nothing could be read; an empty tree is `2`, never a pass):
+
+```yaml
+- run: npx --yes --package @a11ign/toolchain layout-check
+```
+
+With the package installed, `pnpm exec layout-check [directory]` is the same. The directory defaults to the working directory and is read with `git ls-files` in a working tree, else by a walk, both ignoring `node_modules`. A failure reads:
+
+```
+layout-check: FAIL [directory-name] packages/pdf: packages/pdf holds @a11ign/documents, so its directory should be named "documents", not "pdf"
+```
+
+From code, `checkLayout({ root })` and `checkLayoutTree({ "path": "text" })` (a tree listing, with text only for `package.json`, `pnpm-workspace.yaml` and `lerna.json`) return `{ ok, problems: [{ check, path, message }], message, fileCount }`.
+It does not read `lerna.json`'s own `packages` as a workspace, and it does not yet read a README sentence as the allowance for a stated departure (ADR 0043).
+
 ## The TypeScript base
 
 ```json
