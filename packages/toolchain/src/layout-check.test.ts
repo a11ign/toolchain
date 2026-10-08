@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -253,4 +253,22 @@ test("the built bin runs as `layout-check <dir>` and exits with the same codes",
     assert.equal(run.status, 1);
     assert.match(run.stderr, /\[second-readme\] packages\/pdf\/README\.md/);
   });
+});
+
+// The npx one-liner in the changeset hands the bin to the OS, not to `node`: with no shebang `sh` reads `import { … }` as a command and
+// exits 2 (`import: not found`, #4301). So every `bin` is run the way `node_modules/.bin` runs it, through a symlink and with no `node` in front.
+test("every bin starts with a node shebang and runs through its own symlink, as npx runs it", () => {
+  const bins = Object.entries((JSON.parse(readFileSync(join(PACKAGE, "package.json"), "utf8")) as { bin: Record<string, string> }).bin);
+  assert.ok(bins.length > 0, "package.json declares a bin, or this test checks nothing");
+  for (const [name, target] of bins) {
+    const file = join(PACKAGE, target);
+    assert.equal(readFileSync(file, "utf8").split("\n")[0], "#!/usr/bin/env node", `${target} (bin ${name}) begins with a shebang`);
+    const dir = mkdtempSync(join(tmpdir(), "bin-link-"));
+    try {
+      symlinkSync(file, join(dir, name));
+      onDisk(CLEAN, "walk", (root) => assert.equal(spawnSync(join(dir, name), [root], { encoding: "utf8" }).status, 0, `${name} runs directly`));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 });

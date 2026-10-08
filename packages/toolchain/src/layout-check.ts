@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * THE LAYOUT CHECK: A MONOREPO SHAPE CANNOT COME BACK BY HABIT (ADR 0043, Decision 7; a11ign/a11ign#4210).
  *
