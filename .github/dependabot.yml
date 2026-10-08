@@ -4,7 +4,7 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    # ONE entry at the root covers the pnpm workspace.
+    # ONE entry at the root covers the package.
     directory: /
     schedule:
       interval: daily

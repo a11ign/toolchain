@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "@a11ign/toolchain";
-const PACKAGE_DIR = fileURLToPath(new URL("../packages/toolchain/", import.meta.url));
+const PACKAGE_DIR = fileURLToPath(new URL("../", import.meta.url));
 /** The peers a consumer installs beside the package; the ranges are the package's own, read below, never retyped. */
 const PEERS = ["@rstest/core", "@rstest/coverage-v8", "@rslib/core"];
 

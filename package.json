@@ -1,19 +1,98 @@
 {
-  "name": "toolchain-workspace",
-  "private": true,
+  "name": "@a11ign/toolchain",
+  "version": "0.1.0",
+  "description": "The one test and build toolchain every a11ign repository shares: the rstest config (node:test shim, run record, verdict line), the Rslib presets, and the TypeScript base.",
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.34.5",
-  "engines": {
-    "node": ">=22"
+  "exports": {
+    "./rstest-config": {
+      "types": "./dist/rstest-config.d.ts",
+      "default": "./dist/rstest-config.mjs"
+    },
+    "./verdict-reporter": {
+      "types": "./dist/verdict-reporter.d.ts",
+      "default": "./dist/verdict-reporter.mjs"
+    },
+    "./node-test-shim": {
+      "types": "./dist/node-test-shim.d.ts",
+      "default": "./dist/node-test-shim.mjs"
+    },
+    "./register-node-test-alias": {
+      "types": "./dist/register-node-test-alias.d.ts",
+      "default": "./dist/register-node-test-alias.mjs"
+    },
+    "./merge-child-coverage": {
+      "types": "./dist/merge-child-coverage.d.ts",
+      "default": "./dist/merge-child-coverage.mjs"
+    },
+    "./entries": {
+      "types": "./dist/entries.d.ts",
+      "default": "./dist/entries.mjs"
+    },
+    "./rslib-presets": {
+      "types": "./dist/rslib-presets.d.ts",
+      "default": "./dist/rslib-presets.mjs"
+    },
+    "./mjs-ratchet": {
+      "types": "./dist/mjs-ratchet.d.ts",
+      "default": "./dist/mjs-ratchet.mjs"
+    },
+    "./layout-check": {
+      "types": "./dist/layout-check.d.ts",
+      "default": "./dist/layout-check.mjs"
+    },
+    "./tsconfig.base.json": "./tsconfig.base.json"
   },
+  "bin": {
+    "layout-check": "./dist/layout-check.mjs"
+  },
+  "files": [
+    "dist",
+    "tsconfig.base.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "peerDependencies": {
+    "@rslib/core": "^1.0.3",
+    "@rstest/core": "^0.12.3",
+    "@rstest/coverage-v8": "^0.12.3"
+  },
+  "peerDependenciesMeta": {
+    "@rslib/core": {
+      "optional": true
+    },
+    "@rstest/coverage-v8": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a11ign/toolchain.git"
+  },
+  "homepage": "https://github.com/a11ign/toolchain",
+  "keywords": [
+    "rstest",
+    "rslib",
+    "tsconfig",
+    "node:test",
+    "toolchain"
+  ],
   "scripts": {
-    "build": "pnpm -r run build",
+    "build": "rslib build",
     "lint": "eslint .",
     "pretypecheck": "pnpm run build",
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm run build",
     "test": "rstest run",
-    "mjs-ratchet:lower": "tsx -e \"import { writeLoweredBaseline } from './packages/toolchain/src/mjs-ratchet.ts'; console.log(writeLoweredBaseline({ from: process.cwd() }));\"",
+    "mjs-ratchet:lower": "tsx -e \"import { writeLoweredBaseline } from './src/mjs-ratchet.ts'; console.log(writeLoweredBaseline({ from: process.cwd() }));\"",
     "consumer-check": "pnpm run build && tsx scripts/clean-consumer.ts"
   },
   "devDependencies": {

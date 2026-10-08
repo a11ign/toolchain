@@ -2,8 +2,8 @@
  * #3603: THE PACKAGE'S OWN TEST. `entryProblems` is "the test a package runs" to prove its hand-written entry map still agrees with
  * its `exports` map (`entries.ts`), and this package had none of its own: its one test lives in
  * `packages/lab/src/packaging/toolchain-package.test.ts`. A diff that touches only this package then reaches no test, and the `ts` job's
- * per-package fallback glob (`packages/toolchain/src/**\/*.test.ts`) matches 0 and refuses the run. This file is that test, under
- * `src/` where `tsconfig.json` already excludes `src/**\/*.test.ts` from the declarations and `files` ships `dist` only.
+ * per-package fallback glob (this package's own `src/**\/*.test.ts`, in a11ign/a11ign's tree) matches 0 and refuses the run. This file is that test, under
+ * `src/` where `tsconfig.build.json` already excludes `src/**\/*.test.ts` from the declarations and `files` ships `dist` only.
  *
  * It overlaps the first case of `toolchain-package.test.ts` (the real map is clean) and is kept anyway: that one reads this package
  * from outside, this one pins the package's REAL map from inside it. It imports `./entries.ts` and `node:` modules only.
