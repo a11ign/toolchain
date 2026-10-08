@@ -204,6 +204,18 @@ test("toolchain's own ci.yml re-runs on an edited body, runs on the queue, and c
   assert.ok(existsSync(join(ROOT, "packages/toolchain/package.json")), "the releasable path is a real package directory");
 });
 
+test("the calling job grants every permission the called workflow asks for, because a called workflow cannot hold more than its caller gives", () => {
+  // Found by the first real run: ci.yml granted `contents: read` alone, the callee asked for `pull-requests: read` too, and GitHub refused the whole
+  // workflow at startup (`startup_failure`, no job, no log) -- a failure that reads the same as a typo and that no per-file test could see.
+  const workflow = load(CI);
+  const caller = Object.values(workflow.jobs).find((job) => job.uses === "./.github/workflows/changeset-required.yml");
+  const granted = { ...(caller?.permissions ?? workflow.permissions) };
+  const callee = load(REUSABLE);
+  const asked = Object.values(callee.jobs).flatMap((job) => Object.entries({ ...callee.permissions, ...job.permissions }));
+  assert.ok(asked.length > 0, "the called workflow asks for something, or this compares nothing");
+  for (const [scope, level] of asked) assert.equal(granted[scope], level, `${scope}: ${level}`);
+});
+
 test("`gate`, the required check, waits for the changeset check and for the tests, and accepts success only", () => {
   const { jobs } = load(CI);
   const callerName = Object.keys(jobs).find((name) => jobs[name].uses === "./.github/workflows/changeset-required.yml") ?? "";

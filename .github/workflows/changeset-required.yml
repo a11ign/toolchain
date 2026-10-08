@@ -12,6 +12,7 @@
 #     merge_group:
 #   jobs:
 #     changeset:
+#       permissions: { contents: read, pull-requests: read }   # a called workflow cannot hold more than its caller gives: without this the whole run is a `startup_failure`
 #       uses: a11ign/toolchain/.github/workflows/changeset-required.yml@<full sha>
 #       with: { releasable-paths: "src/ packages/nvda-speech/" }
 #     gate:

@@ -28,6 +28,11 @@ jobs:
   # called by LOCAL path: a reusable workflow is consumed by sha and not by release, so adopting it here needs no changeset. `packages/toolchain/` is
   # this repository's `dora` entry's `releasablePaths`. On a merge-group entry the called job succeeds without evaluating.
   changeset:
+    # A called workflow cannot hold more than its caller gives, and this file's `contents: read` alone made GitHub refuse the whole run at startup
+    # (`startup_failure`: no job, no log). The called workflow reads the pull request's files, so it needs `pull-requests: read` too.
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/changeset-required.yml
     with:
       releasable-paths: packages/toolchain/
