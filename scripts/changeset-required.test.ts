@@ -177,6 +177,43 @@ test("on a merge_group entry the job succeeds without evaluating, and on a pull 
   assert.equal(job.if, undefined, "a skipped job reads as skipped, and a required check that never reports blocks the queue");
 });
 
+// Which steps run on an event, read from their `if`. Only `github.event_name ==|!= '<event>'` joined by `&&` is understood, and anything else throws,
+// so a condition this cannot evaluate is a loud failure here rather than a step silently counted as running (or as not).
+const runsOn = (step: Step, event: string): boolean =>
+  (step.if ?? "true").split("&&").every((clause) => {
+    const match = /^\s*(?:true|github\.event_name\s*(==|!=)\s*'([a-z_]+)')\s*$/.exec(clause);
+    if (!match) throw new Error(`cannot evaluate the condition ${JSON.stringify(step.if)} on ${event}`);
+    return match[1] === undefined || (match[1] === "==") === (match[2] === event);
+  });
+const stepsRunningOn = (event: string): Step[] => stepsOf(load(REUSABLE)).filter((step) => runsOn(step, event));
+const PULL_REQUEST_ONLY = /changeset-required\.mjs|gh api|actions\/checkout/;
+const needsAPullRequest = (step: Step): boolean => PULL_REQUEST_ONLY.test(`${step.run ?? ""} ${step.uses ?? ""}`);
+
+test("a push is not evaluated and the job succeeds", () => {
+  // A caller that also runs on `push` (agent-org's `main`, a11ign/a11ign#4139) has no pull request there: `github.event.pull_request.number` is empty,
+  // the file list asks for `pulls//files` and GitHub answers 404, which fails the caller's `gate`.
+  const running = stepsRunningOn("push");
+  assert.deepEqual(running.filter(needsAPullRequest).map((step) => step.name), [], "no step that needs a pull request runs on a push");
+  assert.equal(running.length, 1, "one step runs and says why nothing was evaluated, so the job has a step to succeed with");
+  assert.match(running[0].run ?? "", /^echo /, "a step that only reports");
+  assert.doesNotMatch(running[0].run ?? "", /exit\s+[1-9]/);
+  const job = Object.values(load(REUSABLE).jobs)[0];
+  assert.equal(job.if, undefined, "a skipped job counts as passed for a required check, and the caller's gate accepts success only");
+  assert.equal((running[0] as { "continue-on-error"?: unknown })["continue-on-error"], undefined);
+});
+
+test("a pull request still runs every step that evaluates it, and nothing says it was not evaluated", () => {
+  const running = stepsRunningOn("pull_request");
+  assert.equal(running.filter(needsAPullRequest).length, 3, "the checkout of the script, the file list, and the script");
+  assert.equal(running.length, 3, "no explanation step runs on a pull request: it would read as a pass that evaluated nothing");
+});
+
+test("a merge_group entry runs the one explanation step and no step that needs a pull request", () => {
+  const running = stepsRunningOn("merge_group");
+  assert.equal(running.filter(needsAPullRequest).length, 0);
+  assert.equal(running.length, 1);
+});
+
 test("the pull request's body and the paths reach the script through env, never interpolated into a shell line", () => {
   const steps = stepsOf(load(REUSABLE));
   for (const step of steps) assert.doesNotMatch(step.run ?? "", /\$\{\{/, step.name ?? "unnamed step");
