@@ -315,6 +315,30 @@ test("an empty changeset is not unreleased, and the lone package at the root is 
   }
 });
 
+// a11ign/a11ign#4121: a11ign/screenreader-worker's root package was once a workspace package (`@a11ign/screenreader-worker@0.2.0`) and is now the lone root one
+// (`v0.3.0`). The named lookup found the older tag and never reached the newer `v` tag, so the next minor was 0.3.0 again, a tag that exists.
+test("root package tagged under two forms: the base is the highest of them, so the next release is a new version", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-per-merge-"));
+  try {
+    git(root, "init", "-q", "-b", "main");
+    write(root, "package.json", manifest("@x/y", { version: "0.2.0" }));
+    write(root, ".changeset/config.json", JSON.stringify({ changelog: require.resolve("@changesets/cli/changelog"), commit: false, baseBranch: "main" }));
+    commit(root, "baseline");
+    commit(root, "released");
+    git(root, "tag", "@x/y@0.2.0");
+    git(root, "tag", "v0.3.0");
+    changeset(root, "feature", { "@x/y": "minor" });
+    git(root, "checkout", "-q", "--detach");
+    const result = buildRelease({ cwd: root, changesetVersion, kind: "npm" });
+    // Not `cut`: it tags what was computed, and the unfixed 0.3.0 would fail on git's refusal instead of on this assertion.
+    assert.ok(result.released, "positive control: the release happened, so the assertions below read a tag and not an empty list");
+    assert.deepEqual(result.packages.map(({ tag }) => tag), ["v0.4.0"]);
+    assert.equal(JSON.parse(git(root, "show", `${result.sha}:package.json`)).version, "0.4.0");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ---- the lone package below the root (a11ign/a11ign#3966) ---------------------------------------------------------------------------
 
 /** a11ign/lab's shape: one private package at `packages/lab`, a `lerna.json` and no pnpm workspace, last released as `v1.0.0`. */
