@@ -17,8 +17,8 @@ const readJson = (name: string) => JSON.parse(readFileSync(`${PACKAGE}${name}`, 
 type Manifest = { license?: string; files?: string[]; exports?: Record<string, ExportTarget>; repository?: { url?: string }; version?: string };
 
 const WORKER_LOADED = ["register-node-test-alias", "node-test-shim"];
-/** A subpath that repositories adopt by name (a11ign/a11ign#4243, #4210): the adoption rows look for it, so it must not be renamed away. */
-const ADOPTED = ["mjs-ratchet", "layout-check"];
+/** A subpath that repositories adopt by name (a11ign/a11ign#4243, #4210, #4248): the adoption rows look for it, so it must not be renamed away. */
+const ADOPTED = ["mjs-ratchet", "layout-check", "js-to-ts"];
 
 /** Everything wrong with a manifest, as sentences: empty is agreement. */
 function problemsOf(manifest: Manifest): string[] {
