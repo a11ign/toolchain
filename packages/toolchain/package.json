@@ -37,7 +37,14 @@
       "types": "./dist/mjs-ratchet.d.ts",
       "default": "./dist/mjs-ratchet.mjs"
     },
+    "./layout-check": {
+      "types": "./dist/layout-check.d.ts",
+      "default": "./dist/layout-check.mjs"
+    },
     "./tsconfig.base.json": "./tsconfig.base.json"
+  },
+  "bin": {
+    "layout-check": "./dist/layout-check.mjs"
   },
   "files": [
     "dist",

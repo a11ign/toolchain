@@ -42,3 +42,9 @@ test("CONTROL: an entry that no exports subpath points at is reported, naming th
 test("the ratchet's subpath is built from src/mjs-ratchet.ts, so the export a consumer's test imports has a source (a11ign/a11ign#4243)", () => {
   assert.equal(entries["mjs-ratchet"], "./src/mjs-ratchet.ts");
 });
+
+test("the layout check's subpath is built from src/layout-check.ts, and its bin points at the same built file (a11ign/a11ign#4210)", () => {
+  assert.equal(entries["layout-check"], "./src/layout-check.ts");
+  const { bin } = manifest as PackageExports & { bin?: Record<string, string> };
+  assert.equal(bin?.["layout-check"], "./dist/layout-check.mjs");
+});
