@@ -10,6 +10,7 @@
 #   on:
 #     pull_request: { types: [opened, synchronize, reopened, edited] }   # `edited`: the `no-release:` line is added by editing the body
 #     merge_group:
+#     push:                              # optional: a push is not evaluated (below), so a caller's `main` may run its `gate` too
 #   jobs:
 #     changeset:
 #       permissions: { contents: read, pull-requests: read }   # a called workflow cannot hold more than its caller gives: without this the whole run is a `startup_failure`
@@ -23,6 +24,11 @@
 # THE PULL REQUEST DECIDES, NOT THE QUEUE ENTRY. A `merge_group` entry has no body and no pull request, so on one the job SUCCEEDS WITHOUT
 # EVALUATING (the pull request's own run already decided, and a required check that never reports blocks the queue for ever). It succeeds rather than
 # skips, because a skipped job counts as passed for a required check and the caller's `gate` accepts `success` only.
+#
+# A PUSH IS NOT EVALUATED EITHER (a11ign/a11ign#4140, from the incident #4139). A push has no pull request and no body: `github.event.pull_request.number`
+# is empty, so listing the files asked for `pulls//files` and GitHub answered 404, failing the `gate` of agent-org's `main`. The job succeeds without
+# evaluating, for the merge-group reason and by the same means. Every other event still reaches the evaluating steps, so a `pull_request` run is never
+# a pass by default.
 #
 # A CALLER PINS THIS FILE BY FULL SHA, as it pins `release-per-merge.yml`, and its Dependabot `github-actions` entry moves the pin. The script is
 # fetched at `job.workflow_sha`, the commit this file was read from, so the pin selects both. THE CALLER'S CODE IS NEVER CHECKED OUT OR RUN: this job
@@ -49,8 +55,11 @@ jobs:
       - name: A merge-group entry is not evaluated here
         if: github.event_name == 'merge_group'
         run: echo "A merge-group entry has no pull request body, so nothing is evaluated on it; the pull request's own run decided." | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: A push is not evaluated here
+        if: github.event_name == 'push'
+        run: echo "A push has no pull request, so nothing is evaluated on it; the pull request's own run decided." | tee -a "$GITHUB_STEP_SUMMARY"
       - name: The script, from the commit this workflow was read from
-        if: github.event_name != 'merge_group'
+        if: github.event_name != 'merge_group' && github.event_name != 'push'
         uses: actions/checkout@v7
         with:
           repository: ${{ job.workflow_repository }}
@@ -60,7 +69,7 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: The pull request's changed files
-        if: github.event_name != 'merge_group'
+        if: github.event_name != 'merge_group' && github.event_name != 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,7 +78,7 @@ jobs:
         # `bash` is `bash -eo pipefail`, so an API failure fails this step instead of leaving a short list that reads as a pass.
         run: gh api --paginate "repos/$REPOSITORY/pulls/$NUMBER/files" --jq '.[] | {filename, status, previous_filename}' > "$RUNNER_TEMP/files.jsonl"
       - name: A releasable change needs a changeset or a no-release line
-        if: github.event_name != 'merge_group'
+        if: github.event_name != 'merge_group' && github.event_name != 'push'
         shell: bash
         env:
           FILES_JSONL: ${{ runner.temp }}/files.jsonl
