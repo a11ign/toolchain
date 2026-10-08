@@ -38,3 +38,7 @@ test("CONTROL: an entry that no exports subpath points at is reported, naming th
   assert.equal(problems.length, 1, problems.join("; "));
   assert.match(problems[0], /entry "orphan" is built but no exports subpath points at it/);
 });
+
+test("the ratchet's subpath is built from src/mjs-ratchet.ts, so the export a consumer's test imports has a source (a11ign/a11ign#4243)", () => {
+  assert.equal(entries["mjs-ratchet"], "./src/mjs-ratchet.ts");
+});

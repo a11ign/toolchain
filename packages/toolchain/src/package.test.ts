@@ -17,6 +17,8 @@ const readJson = (name: string) => JSON.parse(readFileSync(`${PACKAGE}${name}`, 
 type Manifest = { license?: string; files?: string[]; exports?: Record<string, ExportTarget>; repository?: { url?: string }; version?: string };
 
 const WORKER_LOADED = ["register-node-test-alias", "node-test-shim"];
+/** A subpath that repositories' tests import by name (a11ign/a11ign#4243): the adoption rows look for it, so it must not be renamed away. */
+const ADOPTED = ["mjs-ratchet"];
 
 /** Everything wrong with a manifest, as sentences: empty is agreement. */
 function problemsOf(manifest: Manifest): string[] {
@@ -25,6 +27,9 @@ function problemsOf(manifest: Manifest): string[] {
   if (manifest.files?.some((file) => file === "src" || file.startsWith("src/"))) problems.push("`files` ships src/, which a published package must not");
   for (const name of WORKER_LOADED) {
     if (manifest.exports?.[`./${name}`] === undefined) problems.push(`exports has no ./${name}, which a worker loads by path`);
+  }
+  for (const name of ADOPTED) {
+    if (manifest.exports?.[`./${name}`] === undefined) problems.push(`exports has no ./${name}, which a repository's test imports to adopt the ratchet`);
   }
   if (!manifest.repository?.url?.includes("a11ign/toolchain")) problems.push("repository is not a11ign/toolchain, which npm provenance checks against the trusted publisher");
   return problems;
@@ -42,6 +47,8 @@ test("CONTROL: each promise, broken alone, is named", () => {
   assert.match(problemsOf({ ...manifest, files: ["dist", "src"] }).join(), /ships src\//);
   const withoutShim = Object.fromEntries(Object.entries(manifest.exports ?? {}).filter(([subpath]) => subpath !== "./node-test-shim"));
   assert.match(problemsOf({ ...manifest, exports: withoutShim }).join(), /no \.\/node-test-shim/);
+  const withoutRatchet = Object.fromEntries(Object.entries(manifest.exports ?? {}).filter(([subpath]) => subpath !== "./mjs-ratchet"));
+  assert.match(problemsOf({ ...manifest, exports: withoutRatchet }).join(), /no \.\/mjs-ratchet/);
   assert.match(problemsOf({ ...manifest, repository: { url: "git+https://github.com/a11ign/a11ign.git" } }).join(), /not a11ign\/toolchain/);
 });
 
