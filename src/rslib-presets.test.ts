@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { libraryPreset } from "./rslib-presets.ts";
 
-const REPOSITORY = fileURLToPath(new URL("../../../", import.meta.url));
+const REPOSITORY = fileURLToPath(new URL("../", import.meta.url));
 const PRESET_SOURCE = fileURLToPath(new URL("./rslib-presets.ts", import.meta.url));
 const FIXTURES = join(REPOSITORY, "node_modules", ".cache", "rslib-preset-fixtures");
 const BUILD_TIMEOUT_MS = 120_000;
@@ -49,7 +49,7 @@ function buildFixture({ keepRule }: { keepRule: boolean }): Built {
   mkdirSync(join(dir, "src"));
   const exports = { ".": { types: "./dist/index.d.mts", default: "./dist/index.mjs" } };
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "fixture", type: "module", exports }));
-  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ extends: join(REPOSITORY, "packages", "toolchain", "tsconfig.base.json"), include: ["src"], compilerOptions: { rootDir: "./src" } }));
+  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ extends: join(REPOSITORY, "tsconfig.base.json"), include: ["src"], compilerOptions: { rootDir: "./src" } }));
   writeFileSync(join(dir, "src", "index.ts"), FIXTURE_SOURCE);
   writeFileSync(join(dir, "src", "data.json"), "{}");
   writeFileSync(join(dir, "rslib.config.ts"), configSource({ keepRule }));

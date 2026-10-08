@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   # A releasable change needs a changeset or a `no-release:` line (a11ign/a11ign#4127). This repository is the first adopter of its own shared check,
-  # called by LOCAL path: a reusable workflow is consumed by sha and not by release, so adopting it here needs no changeset. `packages/toolchain/` is
+  # called by LOCAL path: a reusable workflow is consumed by sha and not by release, so adopting it here needs no changeset. `src/` is
   # this repository's `dora` entry's `releasablePaths`. On a merge-group entry the called job succeeds without evaluating.
   changeset:
     # A called workflow cannot hold more than its caller gives, and this file's `contents: read` alone made GitHub refuse the whole run at startup
@@ -35,7 +35,7 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/changeset-required.yml
     with:
-      releasable-paths: packages/toolchain/
+      releasable-paths: src/
 
   checks:
     runs-on: ubuntu-latest
@@ -55,6 +55,11 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm test
       - run: pnpm run consumer-check
+      # The layout check this package publishes, run from the REGISTRY the way a consumer runs it, so this repository is held to the version a consumer gets.
+      # Not `npx --package @a11ign/toolchain layout-check`: npx finds the root's own name and looks for the unbuilt local bin ("layout-check: not found"), and
+      # the published 0.1.5 bin carries no shebang, so npx's direct exec fails under sh. `pnpm dlx` runs the package's one bin through node, and its bin name
+      # is not repeated (a second word is read as the directory to check).
+      - run: pnpm dlx @a11ign/toolchain
 
   # THE REQUIRED CHECK. `main`'s protection and the `merge-queue-main` ruleset name `gate`, so it stays the one check that answers for the run. It
   # waits for both jobs above and accepts `success` ONLY: `always()` because a job whose need failed is SKIPPED, and a skipped required check counts as

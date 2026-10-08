@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { libraryPreset } from "./rslib-presets.ts";
 
-const REPOSITORY = fileURLToPath(new URL("../../../", import.meta.url));
+const REPOSITORY = fileURLToPath(new URL("../", import.meta.url));
 const PRESET_SOURCE = fileURLToPath(new URL("./rslib-presets.ts", import.meta.url));
 const FIXTURES = join(REPOSITORY, "node_modules", ".cache", "rslib-clean-dist-fixtures");
 const BUILD_TIMEOUT_MS = 120_000;
@@ -42,7 +42,7 @@ function buildOverMarker({ keepKey }: { keepKey: boolean }): { log: string; stat
     mkdirSync(join(dir, "dist"));
     const exports = { ".": { types: "./dist/index.d.mts", default: "./dist/index.mjs" } };
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "fixture", type: "module", exports }));
-    writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ extends: join(REPOSITORY, "packages", "toolchain", "tsconfig.base.json"), include: ["src"], compilerOptions: { rootDir: "./src" } }));
+    writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ extends: join(REPOSITORY, "tsconfig.base.json"), include: ["src"], compilerOptions: { rootDir: "./src" } }));
     writeFileSync(join(dir, "src", "index.ts"), "export const one = 1;\n");
     writeFileSync(join(dir, "rslib.config.ts"), configSource({ keepKey }));
     writeFileSync(join(dir, "dist", MARKER), "");
