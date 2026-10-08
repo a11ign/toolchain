@@ -257,8 +257,8 @@ test("toolchain's own ci.yml re-runs on an edited body, runs on the queue, and c
   assert.ok("merge_group" in workflow.on);
   const caller = Object.values(workflow.jobs).find((job) => job.uses === "./.github/workflows/changeset-required.yml");
   assert.ok(caller, "a job calls the reusable workflow by local path");
-  assert.equal(caller.with?.["releasable-paths"], "packages/toolchain/");
-  assert.ok(existsSync(join(ROOT, "packages/toolchain/package.json")), "the releasable path is a real package directory");
+  assert.equal(caller.with?.["releasable-paths"], "src/");
+  assert.ok(existsSync(join(ROOT, "src")), "the releasable path is a real directory");
 });
 
 test("the calling job grants every permission the called workflow asks for, because a called workflow cannot hold more than its caller gives", () => {

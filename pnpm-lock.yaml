@@ -45,18 +45,6 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
-  packages/toolchain:
-    dependencies:
-      '@rslib/core':
-        specifier: ^1.0.3
-        version: 1.0.3(typescript@6.0.3)
-      '@rstest/core':
-        specifier: ^0.12.3
-        version: 0.12.3
-      '@rstest/coverage-v8':
-        specifier: ^0.12.3
-        version: 0.12.3(@rstest/core@0.12.3)
-
 packages:
 
   '@ast-grep/napi-darwin-arm64@0.45.3':
