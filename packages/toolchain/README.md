@@ -45,6 +45,38 @@ One entry per `exports` key, derived from the package's own `exports` map by `en
 
 **The preset builds into `dist` without emptying it** (a11ign/a11ign#3580): `output.cleanDistPath: false`. Rslib's default empties `dist` before every build, and a `prepack` runs one whenever anything packs a package, so another process reading `dist` (a test file in the same suite) found a built file missing for the length of the build: 5,735 of 239,434 reads (2.4%) in one build of a package, 0 of about 700,000 with it off (measured 2026-10-06). A package does NOT set it in its own `rslib.config`. A build overwrites in place, so a removed entry's old file stays behind locally; a publish builds from a clean checkout.
 
+## The `.mjs` ratchet
+
+The count of `.js`/`.mjs`/`.cjs` source files may only go down (ADR 0043: source is `.ts`; `.mjs` is build output). A repository commits `mjs-ratchet.baseline.json` at its root and adds
+one test its existing `test` command already runs, so no workflow file is touched:
+
+```ts
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+import { checkMjsRatchet } from "@a11ign/toolchain/mjs-ratchet";
+
+test("the .mjs count only goes down", () => {
+  const result = checkMjsRatchet({ from: fileURLToPath(import.meta.url) });
+  assert.ok(result.ok, result.message);
+});
+```
+
+`from` is the test file (or any directory under the root): the baseline is found by walking up to `mjs-ratchet.baseline.json`, so moving the test edits nothing, and a repository with a `.git` and no baseline throws rather than borrowing its parent's.
+
+**Build output** is one constant, `BUILD_OUTPUT_DEFINITION`, printed whenever the check fails: a file ending `.js`, `.mjs` or `.cjs` is SOURCE unless one of its directory segments is exactly `dist`, `build`, `node_modules` or `generated`.
+Tests count (a `.test.mjs` is source); a `.d.ts` is not a `.js`. The files come from `git ls-files` (tracked, plus untracked and not ignored) where the root has a `.git`, else from a walk of the directory with the same exclusions, so the
+check reads the same in a checkout and in a copy laid under another project. A tree with no file but the baseline is RED, never a count of zero.
+
+```json
+{ "files": ["eslint.config.mjs", "release.mjs"], "exceptions": [{ "path": ".pnpmfile.cjs", "why": "pnpm reads only this name" }] }
+```
+
+- `files` is the multiset of **basenames**, so a layout move does not edit it. A basename absent from it, or present more often than listed, fails and names the file(s). **A drop passes** and says the baseline can be lowered.
+- `exceptions` is for a file whose tool reads only that name. An entry without a `why` fails, and so does an entry naming a path the tree no longer holds (so the allowance cannot outlive the file). Exceptions are not counted.
+- At zero, `files` is `[]` and **any** such file fails: no standing allowance but the named exceptions.
+- `writeLoweredBaseline({ from })` rewrites the baseline to what the tree holds now, and **throws instead of raising** it. A repository adds it as a script, e.g. `"mjs-ratchet:lower": "tsx -e \"import { writeLoweredBaseline } from '@a11ign/toolchain/mjs-ratchet'; console.log(writeLoweredBaseline({ from: process.cwd() }))\""`; this repository's is `pnpm run mjs-ratchet:lower`.
+
 ## The TypeScript base
 
 ```json

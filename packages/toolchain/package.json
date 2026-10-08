@@ -33,6 +33,10 @@
       "types": "./dist/rslib-presets.d.ts",
       "default": "./dist/rslib-presets.mjs"
     },
+    "./mjs-ratchet": {
+      "types": "./dist/mjs-ratchet.d.ts",
+      "default": "./dist/mjs-ratchet.mjs"
+    },
     "./tsconfig.base.json": "./tsconfig.base.json"
   },
   "files": [
