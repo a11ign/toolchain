@@ -38,7 +38,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, renameS
 import { createRequire } from "node:module";
 import { basename, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
+import type * as Ts from "typescript";
 
 /** A repository as `{ repository-relative posix path: text }`, text files only. */
 export type Tree = Record<string, string>;
@@ -84,6 +84,29 @@ const EXIT = { ok: 0, residue: 1, unusable: 2 } as const;
 
 const toTs = (path: string): string => path.replace(SOURCE, ".ts");
 const isInside = (path: string, excluded: string): boolean => path === excluded || path.startsWith(`${excluded.replace(/\/$/, "")}/`);
+
+/**
+ * The `typescript` this run uses, bound by `useTypescriptOf` before anything reads it. It is NOT a static import: under `npx --package`
+ * the package sits alone in `_npx/<hash>/node_modules`, `typescript` is an optional peer that npx does not install, and `import ts from
+ * "typescript"` exited ERR_MODULE_NOT_FOUND on a cold cache (a11ign/a11ign#4348). The repository being converted has the copy its own
+ * `tsc` uses, so that one is read first.
+ */
+let ts: typeof Ts;
+
+const INSTALL_TYPESCRIPT = "npm install --save-dev typescript@^6.0.3 (pnpm add -D typescript@^6.0.3, yarn add -D typescript@^6.0.3)";
+
+/** Binds `ts` to the repository's `typescript`, else this package's own peer copy; neither is a refusal that names the install command. */
+function useTypescriptOf(root: string): void {
+  for (const base of [join(root, "noop.js"), import.meta.url]) {
+    try {
+      ts = createRequire(base)("typescript") as typeof Ts;
+      return;
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "MODULE_NOT_FOUND") throw new Error("js-to-ts could not load the typescript it found", { cause });
+    }
+  }
+  throw new Error(`js-to-ts needs the \`typescript\` package (6.x) and found none under ${root} or beside the toolchain: it is an optional peer, which npx does not install. Install it in the repository, then run again: ${INSTALL_TYPESCRIPT}`);
+}
 
 function requireLanguageService(): void {
   if (typeof ts.createLanguageService !== "function") {
@@ -140,7 +163,7 @@ type Range = readonly [start: number, end: number];
  */
 function templateRanges(path: string, text: string): Range[] {
   const ranges: Range[] = [];
-  const visit = (node: ts.Node): void => {
+  const visit = (node: Ts.Node): void => {
     if (ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) ranges.push([node.getStart(), node.end]);
     else ts.forEachChild(node, visit);
   };
@@ -185,7 +208,7 @@ function rewriteReferences(tree: Tree, renames: Record<string, string>): Rewritt
 function optionalizeParameters(fileName: string, text: string): string {
   const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
   const edits: Edit[] = [];
-  const visit = (node: ts.Node): void => {
+  const visit = (node: Ts.Node): void => {
     if (ts.isParameter(node) && isDocumentedOptional(node)) edits.push({ start: node.name.end, end: node.name.end, text: "?" });
     ts.forEachChild(node, visit);
   };
@@ -193,13 +216,13 @@ function optionalizeParameters(fileName: string, text: string): string {
   return applyEdits(text, edits);
 }
 
-function isDocumentedOptional(parameter: ts.ParameterDeclaration): boolean {
+function isDocumentedOptional(parameter: Ts.ParameterDeclaration): boolean {
   if (parameter.type === undefined || parameter.questionToken !== undefined || parameter.initializer !== undefined) return false;
   return ts.getJSDocParameterTags(parameter).some((tag) => tag.isBracketed || tag.typeExpression?.type.kind === ts.SyntaxKind.JSDocOptionalType);
 }
 
-function annotateHost(root: string, files: Tree, targets: string[]): ts.LanguageServiceHost {
-  const options: ts.CompilerOptions = {
+function annotateHost(root: string, files: Tree, targets: string[]): Ts.LanguageServiceHost {
+  const options: Ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, strict: true,
     noEmit: true, allowJs: true, rewriteRelativeImportExtensions: true, skipLibCheck: true,
   };
@@ -233,6 +256,7 @@ function annotate(root: string, files: Tree, targets: string[]): { texts: Tree; 
 
 /** The whole plan for a tree, without touching a disk: what is renamed, what text changes, what is left alone. */
 export function planConversion(tree: Tree, { exclude = [], root = "/repo" }: { exclude?: readonly string[]; root?: string } = {}): Plan {
+  useTypescriptOf(root);
   requireLanguageService();
   const { renames, skipped, notConverted } = chooseCandidates(tree, exclude);
   const { written, unrewritten } = rewriteReferences(tree, renames);
