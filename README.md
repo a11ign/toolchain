@@ -151,7 +151,7 @@ Ten helpers with no local import, published so a repository can take them at a d
 `cli-flags`, `fixture-symbols`, `git-env`, `npm-cli-executable`, `product-home`, `sandbox-exhaustion`, `source-text`, `walk-scope-declaration`,
 `walk-scope-discovery` and `worktree-resolution`, each at `@a11ign/toolchain/lib/<stem>`. They are MOVED from a11ign/a11ign, not rewritten: the code is
 the original's, and the only edits are the two imports that named a sibling by its old package (`walk-scope-declaration` reads `./source-text.ts`).
-Three tests of `worktree-resolution` stayed behind because they exercise a11ign/a11ign's own caller, not the leaf; `source-text`'s ordinary-file control
+Four tests of `worktree-resolution` stayed behind because they exercise a11ign/a11ign's own caller, not the leaf; `source-text`'s ordinary-file control
 reads this package's `scripts/release-per-merge.ts` instead of core's `verify.ts`. `product-home` reads its default repository root from where it is
 installed, so a consumer passes `repoRoot`. Until the core deletes its originals, two sources exist.
 

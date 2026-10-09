@@ -9,12 +9,12 @@
  * CONSTRUCTED TREES, real symlinks: the classifier's whole content is what `realpath` returns, so a
  * fake filesystem would test the string handling and leave the resolution untouched.
  *
- * THREE TESTS STAYED IN a11ign/a11ign (#4585): the two `#3447` ones call `memberScopeLister` and `#2218 THE CALLER` runs a copy of
- * `assert-glob-not-empty.ts`, all from that repository's guards, so they test the CALLER and not this leaf. They move with the caller.
+ * FOUR TESTS STAYED IN a11ign/a11ign (#4585): the two `#3447` ones call `memberScopeLister`, `#2218 THE CALLER` runs a copy of
+ * `assert-glob-not-empty.ts`, and `#2181 THE CALLER` spawns the `agent-org` CLI (on the agent host's PATH, not in CI), so they test the CALLER
+ * and not this leaf. They move with the caller.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,24 +151,6 @@ test("#2181: a DANGLING link is reported as nothing-linked rather than throwing"
     assert.equal(worktreeResolution(tree).kind, RESOLUTION.NOTHING_LINKED);
   });
 });
-
-test("#2181 THE CALLER: `worktree:whose` prints the resolution line for the tree it is asked about", () => {
-  // The classifier was the first thing this repo ships with no caller three times over, so the claim
-  // under test is that a session RUNNING the command it already runs is told.
-  withScratch((base) => {
-    const primary = checkout(base, "primary");
-    const tree = checkout(base, "wt-cli");
-    linkScope(tree, join(primary, "packages", PACKAGE));
-    const ran = spawnSync("agent-org", ["worktree:whose", tree],
-      { encoding: "utf8", env: { ...process.env, A11Y_SESSION: "worker-capture" } });
-    assert.equal(ran.status, 0, ran.stderr);
-    assert.match(ran.stdout, /UNSTAMPED/, "control: the ownership answer is still there");
-    assert.ok(ran.stdout.includes(primary), "the resolution line must name the checkout being read");
-    assert.match(ran.stdout, /resolve OUTSIDE this worktree/);
-  });
-});
-
-// --- #2218: the refusal, at the point a suite starts ---
 
 test("#2218 THE GREEN DIRECTION: a tree wired to another checkout REFUSES, and a correctly wired one is SILENT", () => {
   // The pair is the control: `refuse` on the broken tree is only worth believing beside a `proceed` on the
