@@ -50,6 +50,46 @@
       "types": "./dist/js-to-ts.d.ts",
       "default": "./dist/js-to-ts.mjs"
     },
+    "./lib/cli-flags": {
+      "types": "./dist/lib/cli-flags.d.ts",
+      "default": "./dist/lib/cli-flags.mjs"
+    },
+    "./lib/fixture-symbols": {
+      "types": "./dist/lib/fixture-symbols.d.ts",
+      "default": "./dist/lib/fixture-symbols.mjs"
+    },
+    "./lib/git-env": {
+      "types": "./dist/lib/git-env.d.ts",
+      "default": "./dist/lib/git-env.mjs"
+    },
+    "./lib/npm-cli-executable": {
+      "types": "./dist/lib/npm-cli-executable.d.ts",
+      "default": "./dist/lib/npm-cli-executable.mjs"
+    },
+    "./lib/product-home": {
+      "types": "./dist/lib/product-home.d.ts",
+      "default": "./dist/lib/product-home.mjs"
+    },
+    "./lib/sandbox-exhaustion": {
+      "types": "./dist/lib/sandbox-exhaustion.d.ts",
+      "default": "./dist/lib/sandbox-exhaustion.mjs"
+    },
+    "./lib/source-text": {
+      "types": "./dist/lib/source-text.d.ts",
+      "default": "./dist/lib/source-text.mjs"
+    },
+    "./lib/walk-scope-declaration": {
+      "types": "./dist/lib/walk-scope-declaration.d.ts",
+      "default": "./dist/lib/walk-scope-declaration.mjs"
+    },
+    "./lib/walk-scope-discovery": {
+      "types": "./dist/lib/walk-scope-discovery.d.ts",
+      "default": "./dist/lib/walk-scope-discovery.mjs"
+    },
+    "./lib/worktree-resolution": {
+      "types": "./dist/lib/worktree-resolution.d.ts",
+      "default": "./dist/lib/worktree-resolution.mjs"
+    },
     "./tsconfig.base.json": "./tsconfig.base.json"
   },
   "bin": {

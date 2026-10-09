@@ -145,6 +145,16 @@ It renames every `.mjs`/`.cjs`/`.js` source outside `node_modules`, `dist` and `
 
 `strict`, NodeNext, `declaration`; `declarationMap` and `sourceMap` off for a published package; no `composite`, `outDir` or `rootDir`.
 
+## The leaf helpers (`./lib/<stem>`)
+
+Ten helpers with no local import, published so a repository can take them at a declared version instead of copying them (epic a11ign/a11ign#4425, phase 3):
+`cli-flags`, `fixture-symbols`, `git-env`, `npm-cli-executable`, `product-home`, `sandbox-exhaustion`, `source-text`, `walk-scope-declaration`,
+`walk-scope-discovery` and `worktree-resolution`, each at `@a11ign/toolchain/lib/<stem>`. They are MOVED from a11ign/a11ign, not rewritten: the code is
+the original's, and the only edits are the two imports that named a sibling by its old package (`walk-scope-declaration` reads `./source-text.ts`).
+Four tests of `worktree-resolution` stayed behind because they exercise a11ign/a11ign's own caller, not the leaf; `source-text`'s ordinary-file control
+reads this package's `scripts/release-per-merge.ts` instead of core's `verify.ts`. `product-home` reads its default repository root from where it is
+installed, so a consumer passes `repoRoot`. Until the core deletes its originals, two sources exist.
+
 ## Building and checking this package
 
 Everything runs from the repository root (`pnpm install` first). The package IS the repository: one `package.json`, one README (this one, also the npm page), no workspace file.
