@@ -48,3 +48,9 @@ test("the layout check's subpath is built from src/layout-check.ts, and its bin 
   const { bin } = manifest as PackageExports & { bin?: Record<string, string> };
   assert.equal(bin?.["layout-check"], "./dist/layout-check.mjs");
 });
+
+test("the conversion script's subpath is built from src/js-to-ts.ts, and its bin points at the same built file (a11ign/a11ign#4248)", () => {
+  assert.equal(entries["js-to-ts"], "./src/js-to-ts.ts");
+  const { bin } = manifest as PackageExports & { bin?: Record<string, string> };
+  assert.equal(bin?.["js-to-ts"], "./dist/js-to-ts.mjs");
+});
