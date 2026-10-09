@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { decide, noReleaseReason, parseReleasablePaths } from "./changeset-required.mjs";
+import { decide, noReleaseReason, parseReleasablePaths } from "./changeset-required.ts";
 
 // WHAT THIS PINS (a11ign/a11ign#4127). `changeset-required.mjs` holds the DECISION (files, body and paths in; verdict and reason out), so the
 // cases below RUN it, over the real file lists of screenreader-worker#25 and #26. The two workflows are read as YAML and judged on STRUCTURE

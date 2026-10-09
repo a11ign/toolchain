@@ -69,7 +69,7 @@ Tests count (a `.test.mjs` is source); a `.d.ts` is not a `.js`. The files come 
 check reads the same in a checkout and in a copy laid under another project. A tree with no file but the baseline is RED, never a count of zero.
 
 ```json
-{ "files": ["eslint.config.mjs", "release.mjs"], "exceptions": [{ "path": ".pnpmfile.cjs", "why": "pnpm reads only this name" }] }
+{ "files": ["eslint.config.ts", "release.mjs"], "exceptions": [{ "path": ".pnpmfile.cjs", "why": "pnpm reads only this name" }] }
 ```
 
 - `files` is the multiset of **basenames**, so a layout move does not edit it. A basename absent from it, or present more often than listed, fails and names the file(s). **A drop passes** and says the baseline can be lowered.

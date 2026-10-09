@@ -38,7 +38,7 @@ const PLACEHOLDER = "<reason>";
  * dropped: neither would otherwise match anything, and a check whose paths match nothing passes every pull request.
  * @param {string} paths @returns {string[]}
  */
-export function parseReleasablePaths(paths) {
+export function parseReleasablePaths(paths: string): string[] {
   const entries = paths
     .split(/[\s,]+/)
     .map((entry) => entry.replace(/^\.\//, ""))
@@ -49,7 +49,7 @@ export function parseReleasablePaths(paths) {
 }
 
 /** @param {string} body @returns {string | null} the reason of the first `no-release:` line that has one, else null */
-export function noReleaseReason(body) {
+export function noReleaseReason(body: string): string | null {
   for (const line of body.split(/\r?\n/)) {
     const reason = NO_RELEASE_LINE.exec(line)?.[1];
     if (reason && reason !== PLACEHOLDER) return reason;
@@ -58,21 +58,21 @@ export function noReleaseReason(body) {
 }
 
 /** @param {string} path @param {string[]} releasablePaths */
-const shipped = (path, releasablePaths) => !TEST_FILE.test(path) && releasablePaths.some((entry) => path.startsWith(entry));
+const shipped = (path: string, releasablePaths: string[]) => !TEST_FILE.test(path) && releasablePaths.some((entry) => path.startsWith(entry));
 
 /** @param {ChangedFile} file @param {string[]} releasablePaths @returns {string[]} the paths of this file that are releasable */
-function releasableNamesOf(file, releasablePaths) {
+function releasableNamesOf(file: ChangedFile, releasablePaths: string[]): string[] {
   return [file.filename, file.previous_filename ?? ""].filter((path) => path && shipped(path, releasablePaths));
 }
 
 /** @param {ChangedFile} file */
-function addsAChangeset(file) {
+function addsAChangeset(file: ChangedFile) {
   const arrivedFromElsewhere = file.status === "added" || (file.status === "renamed" && !CHANGESET_FILE.test(file.previous_filename ?? ""));
   return arrivedFromElsewhere && CHANGESET_FILE.test(file.filename);
 }
 
 /** @param {string[]} names @returns {string} */
-function listed(names) {
+function listed(names: string[]): string {
   const rest = names.length - SHOWN;
   return names.slice(0, SHOWN).join(", ") + (rest > 0 ? ` and ${rest} more` : "");
 }
@@ -81,7 +81,7 @@ function listed(names) {
  * @param {{ files: ChangedFile[], body: string, releasablePaths: string[] }} input
  * @returns {{ ok: boolean, reason: string }}
  */
-export function decide({ files, body, releasablePaths }) {
+export function decide({ files, body, releasablePaths }: { files: ChangedFile[]; body: string; releasablePaths: string[]; }): { ok: boolean; reason: string; } {
   if (files.length >= FILE_LIST_LIMIT) return { ok: false, reason: `the pull request lists ${files.length} files, and the API stops at ${FILE_LIST_LIMIT}, so the list may be cut and this cannot be judged: add a changeset or a \`no-release: <reason>\` line` };
   const releasable = [...new Set(files.flatMap((file) => releasableNamesOf(file, releasablePaths)))];
   if (releasable.length === 0) return { ok: true, reason: `no non-test file changed under ${releasablePaths.join(" ")}` };
@@ -95,7 +95,7 @@ export function decide({ files, body, releasablePaths }) {
 }
 
 /** @param {string} text JSON lines, as `gh api --paginate --jq '.[] | {filename, status, previous_filename}'` prints them @returns {ChangedFile[]} */
-export function parseFileList(text) {
+export function parseFileList(text: string): ChangedFile[] {
   const files = text.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
   if (files.length === 0) throw new Error("the file list has no files: a pull request that changes nothing is not this check's to pass, and an API that returned nothing must not read as a pass");
   return files;

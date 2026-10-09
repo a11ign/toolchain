@@ -40,12 +40,12 @@ const RELEASE_BUMP = /:\s*(major|minor|patch)\s*$/;
 const COMMITTER = ["-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com"];
 
 /** @param {string} cwd @param {string[]} args */
-function git(cwd, args) {
+function git(cwd: string, args: string[]) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
 /** @param {string} a @param {string} b @returns {number} */
-function compareVersions(a, b) {
+function compareVersions(a: string, b: string): number {
   const [x, y] = [a, b].map((version) => (SEMVER.exec(version) ?? []).slice(1).map(Number));
   return x.reduce((order, part, i) => order || part - y[i], 0);
 }
@@ -54,14 +54,14 @@ function compareVersions(a, b) {
  * `name@x.y.z` for a package in a workspace, `vx.y.z` for the lone package at the root: changesets' own tag names.
  * @param {string} tag @returns {{ name: string | null, version: string } | null}
  */
-export function parseReleaseTag(tag) {
+export function parseReleaseTag(tag: string): { name: string | null; version: string; } | null {
   const at = tag.lastIndexOf("@");
   const [name, version] = at > 0 ? [tag.slice(0, at), tag.slice(at + 1)] : [null, tag.startsWith("v") ? tag.slice(1) : ""];
   return SEMVER.test(version) ? { name, version } : null;
 }
 
 /** @param {string} cwd @returns {{ tag: string, name: string | null, version: string }[]} */
-function releaseTags(cwd) {
+function releaseTags(cwd: string): { tag: string; name: string | null; version: string; }[] {
   return git(cwd, ["tag", "--list"])
     .split("\n")
     .flatMap((tag) => {
@@ -74,7 +74,7 @@ function releaseTags(cwd) {
  * The changesets every release tag's commit consumed: the files it deleted from its first parent.
  * @param {string} cwd @returns {Set<string>}
  */
-export function releasedChangesets(cwd) {
+export function releasedChangesets(cwd: string): Set<string> {
   const commits = new Set(releaseTags(cwd).map(({ tag }) => git(cwd, ["rev-parse", `${tag}^{commit}`]).trim()));
   const consumed = new Set();
   for (const commit of commits) {
@@ -87,14 +87,14 @@ export function releasedChangesets(cwd) {
 }
 
 /** An empty changeset (`---` then `---`) names no release; counting it would run a release that versions nothing for ever. @param {string} text */
-export function namesARelease(text) {
+export function namesARelease(text: string) {
   const lines = text.split("\n");
   const fences = lines.flatMap((line, i) => (/^---\s*$/.test(line) ? [i] : []));
   return fences.length >= 2 && lines.slice(fences[0] + 1, fences[1]).some((line) => RELEASE_BUMP.test(line));
 }
 
 /** @param {string} cwd @returns {string[]} every changeset file in the tree, as repository paths */
-function presentChangesets(cwd) {
+function presentChangesets(cwd: string): string[] {
   return readdirSync(join(cwd, ".changeset"))
     .filter((file) => file.endsWith(".md") && file !== "README.md")
     .map((file) => `.changeset/${file}`)
@@ -105,7 +105,7 @@ function presentChangesets(cwd) {
  * @param {{ cwd: string, released?: (cwd: string) => Set<string> }} options `released` is what has been consumed; a test swaps it to show what the subtraction is for
  * @returns {{ present: string[], unreleased: string[] }} `unreleased` holds only those that name a release
  */
-export function unreleasedChangesets({ cwd, released = releasedChangesets }) {
+export function unreleasedChangesets({ cwd, released = releasedChangesets }: { cwd: string; released?: (cwd: string) => Set<string>; }): { present: string[]; unreleased: string[]; } {
   const present = presentChangesets(cwd);
   const consumed = released(cwd);
   const unreleased = present.filter((path) => !consumed.has(path) && namesARelease(readFileSync(join(cwd, path), "utf8")));
@@ -113,7 +113,7 @@ export function unreleasedChangesets({ cwd, released = releasedChangesets }) {
 }
 
 /** @param {string} cwd @returns {{ name: string, dir: string, private: boolean, version: string }[]} */
-function manifests(cwd) {
+function manifests(cwd: string): { name: string; dir: string; private: boolean; version: string; }[] {
   return git(cwd, ["ls-files", "--", ":(glob)package.json", ":(glob)**/package.json"])
     .split("\n")
     .filter(Boolean)
@@ -124,9 +124,9 @@ function manifests(cwd) {
 }
 
 /** The newest tag of each package. @param {string} cwd @returns {Map<string | null, { tag: string, version: string }>} */
-function latestTags(cwd) {
+function latestTags(cwd: string): Map<string | null, { tag: string; version: string; }> {
   /** @type {Map<string | null, { tag: string, version: string }>} */
-  const latest = new Map();
+  const latest: Map<string | null, { tag: string; version: string; }> = new Map();
   for (const { tag, name, version } of releaseTags(cwd)) {
     const best = latest.get(name);
     if (!best || compareVersions(version, best.version) > 0) latest.set(name, { tag, version });
@@ -138,7 +138,7 @@ function latestTags(cwd) {
  * The caller's `lone-package-dir`, as the repository-relative directory `manifests` reports. Empty is no lone package below the root.
  * @param {string | undefined} input @returns {string | null}
  */
-export function loneDirOf(input) {
+export function loneDirOf(input: string | undefined): string | null {
   const named = (input ?? "").trim();
   if (!named) return null;
   const dir = posix.normalize(named).replace(/\/+$/, "") || ".";
@@ -147,10 +147,10 @@ export function loneDirOf(input) {
 }
 
 /** The root package is the lone one until the caller names another directory, and then it is an ordinary package. @param {string} dir @param {string | null} loneDir */
-const isLone = (dir, loneDir) => dir === (loneDir ?? ".");
+const isLone = (dir: string, loneDir: string | null) => dir === (loneDir ?? ".");
 
 /** A typo here would otherwise read as "the changesets move no releasable package", and a release that never happens says nothing. @param {string} cwd @param {string | null} loneDir */
-function refuseUnknownLoneDir(cwd, loneDir) {
+function refuseUnknownLoneDir(cwd: string, loneDir: string | null) {
   if (loneDir !== null && !manifests(cwd).some(({ dir }) => dir === loneDir)) throw new Error(`lone-package-dir is '${loneDir}', and no package.json is tracked there`);
 }
 
@@ -160,13 +160,13 @@ function refuseUnknownLoneDir(cwd, loneDir) {
  * hid `v0.3.0`, so the next minor was the 0.3.0 that exists). A repository with one form has one candidate, and the answer is unchanged.
  * @param {Map<string | null, { tag: string, version: string }>} latest @param {{ name: string, dir: string }} pkg @param {string | null} loneDir
  */
-function baseTag(latest, { name, dir }, loneDir) {
+function baseTag(latest: Map<string | null, { tag: string; version: string; }>, { name, dir }: { name: string; dir: string; }, loneDir: string | null) {
   const candidates = [latest.get(name), isLone(dir, loneDir) ? latest.get(null) : undefined].filter((tagged) => tagged !== undefined);
   return candidates.reduce((best, next) => (compareVersions(next.version, best.version) > 0 ? next : best), candidates[0]);
 }
 
 /** @param {string} cwd @param {string} file @param {(manifest: Record<string, unknown>) => void} edit */
-function editManifest(cwd, file, edit) {
+function editManifest(cwd: string, file: string, edit: (manifest: Record<string, unknown>) => void) {
   const before = readFileSync(join(cwd, file), "utf8");
   const manifest = JSON.parse(before);
   edit(manifest);
@@ -184,7 +184,7 @@ const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies"
  * @param {string} cwd @param {Map<string | null, { tag: string, version: string }>} latest @param {string | null} loneDir
  * @returns {Map<string, { from: string, to: string }>} by package name
  */
-function movedPins(cwd, latest, loneDir) {
+function movedPins(cwd: string, latest: Map<string | null, { tag: string; version: string; }>, loneDir: string | null): Map<string, { from: string; to: string; }> {
   const moved = new Map();
   for (const { name, dir, version } of manifests(cwd)) {
     const to = baseTag(latest, { name, dir }, loneDir)?.version;
@@ -194,7 +194,7 @@ function movedPins(cwd, latest, loneDir) {
 }
 
 /** @param {Record<string, unknown>} manifest @param {Map<string, { from: string, to: string }>} moved */
-function repinMoved(manifest, moved) {
+function repinMoved(manifest: Record<string, unknown>, moved: Map<string, { from: string; to: string; }>) {
   for (const field of DEPENDENCY_FIELDS) {
     const dependencies = /** @type {Record<string, string>} */ (manifest[field] ?? {});
     for (const [name, range] of Object.entries(dependencies)) {
@@ -209,7 +209,7 @@ function repinMoved(manifest, moved) {
  * with it. A package with no tag keeps what the merge has. Only the version and those pins are taken: the rest of package.json is this merge's.
  * @param {{ cwd: string, loneDir: string | null }} options @returns {Map<string, string>} each package's version after, by directory
  */
-function rebaseOnLastTags({ cwd, loneDir }) {
+function rebaseOnLastTags({ cwd, loneDir }: { cwd: string; loneDir: string | null; }): Map<string, string> {
   const latest = latestTags(cwd);
   const moved = movedPins(cwd, latest, loneDir);
   const versions = new Map();
@@ -231,7 +231,7 @@ function rebaseOnLastTags({ cwd, loneDir }) {
 }
 
 /** @param {string} cwd @param {string[]} paths */
-function removeFiles(cwd, paths) {
+function removeFiles(cwd: string, paths: string[]) {
   for (const path of paths) rmSync(join(cwd, path), { force: true });
 }
 
@@ -240,14 +240,14 @@ function removeFiles(cwd, paths) {
  * or where the caller named it (and then not at the root): the repository's own version (lab and control are `"private": true`, with `privatePackages: { version: true, tag: false }`).
  * @param {{ private: boolean, dir: string }} manifest @param {{ kind: "npm" | "tag", loneDir: string | null }} options
  */
-const releasable = ({ private: isPrivate, dir }, { kind, loneDir }) => !isPrivate || (kind === "tag" && isLone(dir, loneDir));
+const releasable = ({ private: isPrivate, dir }: { private: boolean; dir: string; }, { kind, loneDir }: { kind: "npm" | "tag"; loneDir: string | null; }) => !isPrivate || (kind === "tag" && isLone(dir, loneDir));
 
 /**
  * `lone` is what the tag job reads to mark the Release `--latest`: of several packages' Releases no one is "the" latest.
  * @typedef {{ name: string, dir: string, version: string, tag: string, lone: boolean }} ReleasedPackage
  * @param {{ cwd: string, before: Map<string, string>, kind: "npm" | "tag", loneDir: string | null }} versions @returns {ReleasedPackage[]}
  */
-function packagesThatMoved({ cwd, before, kind, loneDir }) {
+function packagesThatMoved({ cwd, before, kind, loneDir }: { cwd: string; before: Map<string, string>; kind: "npm" | "tag"; loneDir: string | null; }): ReleasedPackage[] {
   const after = manifests(cwd).filter(({ dir, version }) => before.get(dir) !== version);
   return after
     .filter((manifest) => releasable(manifest, { kind, loneDir }))
@@ -259,7 +259,7 @@ function packagesThatMoved({ cwd, before, kind, loneDir }) {
  * whose notes cannot be written is worse than no release.
  * @param {string} cwd @param {ReleasedPackage} released
  */
-function refuseUnreleasable(cwd, { name, dir, version }) {
+function refuseUnreleasable(cwd: string, { name, dir, version }: ReleasedPackage) {
   if (!SEMVER.test(version)) throw new Error(`${name}: version '${version}' is not MAJOR.MINOR.PATCH, so no tag is cut`);
   const path = join(cwd, dir, "CHANGELOG.md");
   if (!existsSync(path)) throw new Error(`${name}: ${join(dir, "CHANGELOG.md")} does not exist, so ${version} has no release notes`);
@@ -271,7 +271,7 @@ function refuseUnreleasable(cwd, { name, dir, version }) {
 }
 
 /** The tree object of `.github/workflows` at `rev`, or "" where `rev` has none. Two revisions with the same value hold the same workflows. @param {string} cwd @param {string} rev */
-export function workflowsTree(cwd, rev) {
+export function workflowsTree(cwd: string, rev: string) {
   const [, , tree] = git(cwd, ["ls-tree", "-d", rev, "--", ".github/workflows"]).trim().split(/\s+/);
   return tree ?? "";
 }
@@ -281,7 +281,7 @@ export function workflowsTree(cwd, rev) {
  * @param {{ cwd: string, tip: string }} options `tip` is any revision naming the default branch's tip, read as late as the caller can.
  * @returns {boolean} whether HEAD was amended
  */
-export function graftTipWorkflows({ cwd, tip }) {
+export function graftTipWorkflows({ cwd, tip }: { cwd: string; tip: string; }): boolean {
   const wanted = workflowsTree(cwd, tip);
   if (wanted === workflowsTree(cwd, "HEAD")) return false;
   git(cwd, ["rm", "-rq", "--ignore-unmatch", "--", ".github/workflows"]);
@@ -294,7 +294,7 @@ export function graftTipWorkflows({ cwd, tip }) {
  * The refusal GitHub would make, said first and in words: the tip's workflows are not the commit's, so a push of it is going to be rejected.
  * @param {{ cwd: string, commit: string, tip: string }} options
  */
-export function assertWorkflowsHeld({ cwd, commit, tip }) {
+export function assertWorkflowsHeld({ cwd, commit, tip }: { cwd: string; commit: string; tip: string; }) {
   const [held, moved] = [workflowsTree(cwd, commit), workflowsTree(cwd, tip)];
   if (held === moved) return;
   throw new Error(`.github/workflows moved on the default branch after this release commit was built (commit ${held || "none"}, tip ${moved || "none"}); GitHub refuses a push of it, so no tag is pushed. Run the release again from the tip.`);
@@ -307,7 +307,7 @@ export function assertWorkflowsHeld({ cwd, commit, tip }) {
  *   `tip`, where given, is the revision whose `.github/workflows` the release commit takes (see the head of this file); the workflow reads it as late as it can.
  * @returns {{ released: false, reason: string } | { released: true, sha: string, packages: ReleasedPackage[] }}
  */
-export function buildRelease({ cwd, changesetVersion, kind, released, lonePackageDir, tip }) {
+export function buildRelease({ cwd, changesetVersion, kind, released, lonePackageDir, tip }: { cwd: string; changesetVersion: (cwd: string) => void; kind: "npm" | "tag"; released?: (cwd: string) => Set<string>; lonePackageDir?: string; tip?: string; }): { released: false; reason: string; } | { released: true; sha: string; packages: ReleasedPackage[]; } {
   const loneDir = loneDirOf(lonePackageDir);
   refuseUnknownLoneDir(cwd, loneDir);
   if (existsSync(join(cwd, ".changeset", "pre.json"))) throw new Error("pre-release mode (.changeset/pre.json) is not supported: every tag here is a plain x.y.z");
@@ -328,7 +328,7 @@ export function buildRelease({ cwd, changesetVersion, kind, released, lonePackag
 }
 
 /** The changelog entry `changeset version` wrote for one version. @param {string} changelog @param {string} version */
-export function changelogEntry(changelog, version) {
+export function changelogEntry(changelog: string, version: string) {
   let keep = false;
   const entry = [];
   for (const line of changelog.split("\n")) {
@@ -345,7 +345,7 @@ export function changelogEntry(changelog, version) {
  * no lockfile, no `packageManager`, `@changesets/cli` not a dependency) installed nothing, so the CLI is fetched at the version the caller names.
  * @param {string} cwd
  */
-function changesetVersionInCi(cwd) {
+function changesetVersionInCi(cwd: string) {
   if (!existsSync(join(cwd, "pnpm-lock.yaml"))) {
     const cli = process.env.CHANGESETS_VERSION ?? "";
     if (!SEMVER.test(cli)) throw new Error(`CHANGESETS_VERSION is '${cli}'; a repository with no lockfile runs \`pnpm dlx @changesets/cli@<version>\`, and the version is MAJOR.MINOR.PATCH`);
@@ -361,20 +361,20 @@ function changesetVersionInCi(cwd) {
  * given the input only where there is no `packageManager`; `cache: pnpm` fails on a missing lockfile, so it is given only where there is one.
  * @param {{ cwd: string, pnpmVersion: string }} options @returns {{ "pnpm-version": string, cache: string }}
  */
-export function pnpmSetup({ cwd, pnpmVersion }) {
+export function pnpmSetup({ cwd, pnpmVersion }: { cwd: string; pnpmVersion: string; }): { "pnpm-version": string; cache: string; } {
   const { packageManager } = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
   if (!packageManager && !pnpmVersion) throw new Error("package.json has no packageManager and the pnpm-version input is empty, so pnpm/action-setup has no version to install");
   return { "pnpm-version": packageManager ? "" : pnpmVersion, cache: existsSync(join(cwd, "pnpm-lock.yaml")) ? "pnpm" : "" };
 }
 
 /** @param {string | undefined} kind @returns {"npm" | "tag"} */
-function kindOf(kind) {
+function kindOf(kind: string | undefined): "npm" | "tag" {
   if (kind !== "npm" && kind !== "tag") throw new Error(`KIND is '${kind}'; it is npm or tag`);
   return kind;
 }
 
 /** @param {Record<string, string>} outputs */
-function setOutputs(outputs) {
+function setOutputs(outputs: Record<string, string>) {
   for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(outputs).map(([k, v]) => `${k}=${v}\n`).join(""));
 }

@@ -1,7 +1,7 @@
 {
   "files": [
     "changeset-required.mjs",
-    "eslint.config.mjs",
+    "eslint.config.ts",
     "release-per-merge.mjs"
   ],
   "exceptions": []

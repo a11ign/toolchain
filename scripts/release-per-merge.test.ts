@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { assertWorkflowsHeld, buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets, workflowsTree } from "./release-per-merge.mjs";
+import { assertWorkflowsHeld, buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets, workflowsTree } from "./release-per-merge.ts";
 
 // WHAT THIS PINS, AND HOW IT READS THE WORKFLOW. `release-per-merge.yml` is read as YAML and judged on STRUCTURE (keys, permissions, `needs`,
 // `if`), never on words: the file's comments explain WHY in the very words a text match would find. The version logic is not read at all:

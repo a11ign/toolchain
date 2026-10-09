@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { buildRelease } from "./release-per-merge.mjs";
+import { buildRelease } from "./release-per-merge.ts";
 
 // PARITY WITH agent-org's OWN RELEASE (a11ign/a11ign#3964, the parity table on #3958). agent-org's `release.yml` is the model, so the shared
 // `release-per-merge.yml` must lose none of what it guarantees before agent-org calls it. G1 to G5 below are the five lines that table marked

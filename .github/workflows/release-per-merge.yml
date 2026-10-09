@@ -1,7 +1,7 @@
 # ONE PER-MERGE RELEASE WORKFLOW, FOR EVERY REPOSITORY (chairman's CI/CD direction, a11ign/a11ign#928; row a11ign/a11ign#3712).
 # A push to `main` whose tree carries a changeset no tag has consumed is versioned on a DETACHED COMMIT, published by OIDC where the
 # package publishes, tagged and released. THERE IS NO VERSION PULL REQUEST, and `main` IS NEVER WRITTEN: its own versions and changelogs lag
-# the last tag, and nothing reads them. `scripts/release-per-merge.mjs` holds the version logic and `scripts/release-per-merge.test.ts` runs it.
+# the last tag, and nothing reads them. `scripts/release-per-merge.ts` holds the version logic and `scripts/release-per-merge.test.ts` runs it.
 #
 # A CALLER is one job, in a file of its own that keeps the name its npm trusted-publisher entry gives (see the OIDC note below):
 #
@@ -30,7 +30,7 @@
 # a caller whose one versioned package sits in a subdirectory (a11ign/lab: `packages/lab`, no workspace) names it in `lone-package-dir`, and that package is
 # tagged `vx.y.z` and its Release marked latest, exactly as a root package is; under `kind: tag` it is released though private. Unset, nothing changes. A version that is not
 # MAJOR.MINOR.PATCH, or a package whose CHANGELOG.md has no entry for it, is refused in `version`, before any tag. What a release consumed is read off the release commits
-# the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.mjs`.
+# the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.ts`.
 #
 # A REPOSITORY NEED NOT HAVE A LOCKFILE (agent-org has none, no `packageManager`, and `@changesets/cli` is not a dependency). With one, `version`
 # runs `pnpm install --frozen-lockfile` and the repository's own `changeset`. Without, it installs nothing and runs `pnpm dlx
@@ -163,7 +163,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .release-tool
-          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout: scripts/release-per-merge.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Which changesets has no tag consumed yet?
@@ -307,7 +307,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .release-tool
-          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout: scripts/release-per-merge.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/download-artifact@v8
