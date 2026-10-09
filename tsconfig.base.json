@@ -17,6 +17,12 @@
     // `.mjs` is still type-checked where a repository keeps some, so JS must be allowed in.
     "allowJs": true,
 
+    // The files are already written to the subset a host's Node can strip types from (ADR 0043, Decision 8), so an enum, a namespace or a
+    // parameter property is refused here (TS1294) rather than the day a host runs the source directly.
+    "erasableSyntaxOnly": true,
+    // `js-to-ts` rewrites `./x.js` to `./x.ts`; without this the checker refuses that import (TS5097). It also emits `.js` again, which Rslib never asks of `tsc`.
+    "rewriteRelativeImportExtensions": true,
+
     "declaration": true,
     "declarationMap": false,
     "sourceMap": false
