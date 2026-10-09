@@ -58,6 +58,10 @@
       "types": "./dist/lib/changed-packages.d.ts",
       "default": "./dist/lib/changed-packages.mjs"
     },
+    "./lib/ci-changed": {
+      "types": "./dist/lib/ci-changed.d.ts",
+      "default": "./dist/lib/ci-changed.mjs"
+    },
     "./lib/cli-flags": {
       "types": "./dist/lib/cli-flags.d.ts",
       "default": "./dist/lib/cli-flags.mjs"
@@ -73,6 +77,10 @@
     "./lib/git-sandbox": {
       "types": "./dist/lib/git-sandbox.d.ts",
       "default": "./dist/lib/git-sandbox.mjs"
+    },
+    "./lib/isolation-gate": {
+      "types": "./dist/lib/isolation-gate.d.ts",
+      "default": "./dist/lib/isolation-gate.mjs"
     },
     "./lib/local-import-closure": {
       "types": "./dist/lib/local-import-closure.d.ts",

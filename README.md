@@ -161,6 +161,11 @@ its sibling under `src/lib/` (`./cli-flags.ts`, `./npm-cli-executable.ts`, `./gi
 from where they sit (now `../../`, this package's root in source), so a consumer of the built file works from the root it installs under. `walk-scope`
 carries its own small `knownPackages`, because the core's `ci-changed` is not published yet (a11ign/a11ign#4587).
 
+The last two are published the same way (phase 3, row 3): `isolation-gate`, with its layers test, and `ci-changed`. `ci-changed` names `changed-files`,
+`changed-packages`, `cli-flags`, `git-env` and `isolation-gate` as siblings under `src/lib/`. `isolation-gate` reads a repository root from where it sits (now
+`../../`, this package's root in source) and looks for `packages/` and `layers.json` under it, so a consumer of the built file runs it against the root it
+installs under. `ci-changed` reads the working directory unless given `--repo`. `ci-changed`'s own test stays in the core: it reads the core's workflows.
+
 ## Building and checking this package
 
 Everything runs from the repository root (`pnpm install` first). The package IS the repository: one `package.json`, one README (this one, also the npm page), no workspace file.
