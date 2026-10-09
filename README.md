@@ -105,7 +105,7 @@ It does not read `lerna.json`'s own `packages` as a workspace, and it does not y
 
 ## The JS-to-TS conversion
 
-JSDoc source becomes TypeScript by a script, and an agent fixes only what the script reports as residue (ADR 0043). **The one line** (run it from the repository root; it needs `typescript` 6.x, which the repository already has):
+JSDoc source becomes TypeScript by a script, and an agent fixes only what the script reports as residue (ADR 0043). **The one line** (run it from the repository root; it needs `typescript` 6.x in the repository, which it loads from there because `npx` does not install an optional peer; with none, it exits `2` and names `npm install --save-dev typescript@^6.0.3`):
 
 ```
 npx --yes --package @a11ign/toolchain js-to-ts [directory] [--exclude <path>]... [--dry-run] [--json]

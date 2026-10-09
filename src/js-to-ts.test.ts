@@ -7,9 +7,10 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { convert, main, planConversion, readTree, type Tree } from "./js-to-ts.ts";
 
 const made: string[] = [];
@@ -185,4 +186,54 @@ test("in a git repository the rename is a git mv, so history follows", () => {
   assert.equal(main([root], quiet()), 0);
   const renames = git("diff", "--cached", "--name-status", "-M").split("\n").filter((line) => line.startsWith("R"));
   assert.equal(renames.length, 2, `git sees two renames: ${renames.join(" | ")}`);
+});
+
+// THE ONE LINE ON A COLD CACHE (a11ign/a11ign#4348). `npx --package @a11ign/toolchain js-to-ts` puts the package alone in `_npx/<hash>/node_modules`,
+// and `typescript` is an OPTIONAL peer that npx does not install, so a static `import ts from "typescript"` exited ERR_MODULE_NOT_FOUND. The registry
+// run is the row's hand-run; this is the same shape offline: the PACKED tarball unpacked under a temp directory with no `typescript` on any path
+// above it, run as its bin against a repository that has (or has not) its own `typescript`.
+
+/** The packed tarball of this package, unpacked to `<scratch>/node_modules/@a11ign/toolchain`, and the bin inside it. Built once: `pnpm test` builds `dist` first. */
+let installedBin: string | undefined;
+function packedBin(): string {
+  if (installedBin !== undefined) return installedBin;
+  const scratch = mkdtempSync(join(tmpdir(), "js-to-ts-pack-"));
+  made.push(scratch);
+  const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const [packed] = JSON.parse(execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", scratch], { cwd: packageDir, encoding: "utf8" })) as { filename: string }[];
+  const installed = join(scratch, "node_modules", "@a11ign", "toolchain");
+  mkdirSync(installed, { recursive: true });
+  execFileSync("tar", ["-xzf", join(scratch, packed.filename), "--strip-components=1", "-C", installed]);
+  installedBin = join(installed, "dist", "js-to-ts.mjs");
+  return installedBin;
+}
+
+const ownTypescript = dirname(dirname(ownTsc));
+
+/** Runs the packed bin on a flat fixture repository, with no path to `typescript` except what the repository itself holds. */
+function runPackedBin(args: string[], { repositoryHasTypescript }: { repositoryHasTypescript: boolean }) {
+  const root = fixture({ "src/a.mjs": A, "src/b.mjs": B });
+  if (repositoryHasTypescript) {
+    mkdirSync(join(root, "node_modules"));
+    symlinkSync(ownTypescript, join(root, "node_modules", "typescript"), "dir");
+  }
+  const env = { ...process.env, NODE_PATH: "" };
+  const run = spawnSync(process.execPath, [packedBin(), ...args, root], { cwd: root, encoding: "utf8", env });
+  return { root, status: run.status, output: `${run.stdout}${run.stderr}` };
+}
+
+test("the packed bin, with no typescript beside the package, converts a repository that has its own", () => {
+  const { root, status, output } = runPackedBin([], { repositoryHasTypescript: true });
+  assert.equal(status, 0, output);
+  assert.match(output, /renamed 2 file\(s\) under TypeScript 6\./);
+  assert.equal(output.includes("ERR_MODULE_NOT_FOUND"), false, output);
+  assert.equal(tscStatus(root), 0, "the converted fixture typechecks");
+});
+
+test("the packed bin, with typescript nowhere, refuses with the command that installs it and exits 2", () => {
+  const { status, output } = runPackedBin(["--dry-run"], { repositoryHasTypescript: false });
+  assert.equal(status, 2, output);
+  assert.match(output, /needs the `typescript` package \(6\.x\)/);
+  assert.match(output, /npm install --save-dev typescript@\^6\.0\.3/);
+  assert.equal(output.includes("ERR_MODULE_NOT_FOUND"), false, "a refusal that names the install, not a stack trace");
 });
