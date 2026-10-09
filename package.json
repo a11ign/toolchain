@@ -87,13 +87,15 @@
   ],
   "scripts": {
     "build": "rslib build",
+    "prepack": "rslib build",
     "lint": "eslint .",
     "pretypecheck": "pnpm run build",
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm run build",
     "test": "rstest run",
     "mjs-ratchet:lower": "tsx -e \"import { writeLoweredBaseline } from './src/mjs-ratchet.ts'; console.log(writeLoweredBaseline({ from: process.cwd() }));\"",
-    "consumer-check": "pnpm run build && tsx scripts/clean-consumer.ts"
+    "consumer-check": "pnpm run build && tsx scripts/clean-consumer.ts",
+    "pack-check": "tsx scripts/release-pack-contents.ts"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
