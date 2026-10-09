@@ -55,11 +55,15 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm test
       - run: pnpm run consumer-check
-      # The layout check this package publishes, run from the REGISTRY the way a consumer runs it, so this repository is held to the version a consumer gets.
-      # Not `npx --package @a11ign/toolchain layout-check`: npx finds the root's own name and looks for the unbuilt local bin ("layout-check: not found"), and
-      # the published 0.1.5 bin carries no shebang, so npx's direct exec fails under sh. `pnpm dlx` runs the package's one bin through node, and its bin name
-      # is not repeated (a second word is read as the directory to check).
-      - run: pnpm dlx @a11ign/toolchain
+      # THE RELEASE PACKS WHAT `prepack` BUILDS, and this step refuses a tarball that is missing any `exports` target or the bin (a11ign/a11ign#4310). It reads
+      # `npm pack --dry-run --json`, not the source tree, and removes `dist` first: the steps above have built it, and a stale `dist` would let a missing `prepack`
+      # pass. 0.1.6 was published with 4 files because #4213 dropped `prepack` and the release packed an unbuilt tree; `gate`, which the release waits for, now
+      # stands behind this step.
+      - run: pnpm run pack-check
+      # The layout check this package publishes, run from the BUILD of this tree (`pack-check` has just rebuilt it). It was `pnpm dlx @a11ign/toolchain`, the
+      # registry's `latest`, and that made every pull request's gate depend on the last release: 0.1.6 had no `dist`, so the fix for it could not go green.
+      # The registry's package is accepted by `consumer-check`'s `@a11ign/toolchain@<version>` form, which a release is checked against.
+      - run: node dist/layout-check.mjs
 
   # THE REQUIRED CHECK. `main`'s protection and the `merge-queue-main` ruleset name `gate`, so it stays the one check that answers for the run. It
   # waits for both jobs above and accepts `success` ONLY: `always()` because a job whose need failed is SKIPPED, and a skipped required check counts as
