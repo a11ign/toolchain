@@ -1,7 +1,7 @@
 # ONE PER-MERGE RELEASE WORKFLOW, FOR EVERY REPOSITORY (chairman's CI/CD direction, a11ign/a11ign#928; row a11ign/a11ign#3712).
 # A push to `main` whose tree carries a changeset no tag has consumed is versioned on a DETACHED COMMIT, published by OIDC where the
 # package publishes, tagged and released. THERE IS NO VERSION PULL REQUEST, and `main` IS NEVER WRITTEN: its own versions and changelogs lag
-# the last tag, and nothing reads them. `scripts/release-per-merge.mjs` holds the version logic and `scripts/release-per-merge.test.ts` runs it.
+# the last tag, and nothing reads them. `scripts/release-per-merge.ts` holds the version logic and `scripts/release-per-merge.test.ts` runs it.
 #
 # A CALLER is one job, in a file of its own that keeps the name its npm trusted-publisher entry gives (see the OIDC note below):
 #
@@ -26,7 +26,7 @@
 #
 # ONE TAG PER PACKAGE, as changesets names them: `name@x.y.z`, or `vx.y.z` for the lone package at the repository root. A private package is
 # versioned and tagged by neither (`privatePackages: { version: false, tag: false }`). What a release consumed is read off the release commits
-# the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.mjs`.
+# the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.ts`.
 #
 # THE OIDC TOKEN NAMES THE CALLING WORKFLOW'S FILE, according to npm's trusted-publisher documentation ("validation checks the calling
 # workflow's name instead of the workflow that actually contains the publish command"). NOT VERIFIED BY A PUBLISH: the `toolchain` migration row
@@ -134,7 +134,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .release-tool
-          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout: scripts/release-per-merge.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Which changesets has no tag consumed yet?
@@ -142,7 +142,7 @@ jobs:
         run: |
           # Out of the release commit's reach: `git add -A` below must not take the tool.
           echo .release-tool >> .git/info/exclude
-          node .release-tool/scripts/release-per-merge.mjs plan | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts plan | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: pnpm/action-setup@v6
         if: steps.plan.outputs.count != '0'
       - uses: actions/setup-node@v7
@@ -156,7 +156,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           git switch --detach
-          node .release-tool/scripts/release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts version | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Carry the release commit to the jobs after this one, as a bundle
         if: steps.release.outputs.released == 'true'
         env:
@@ -246,7 +246,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .release-tool
-          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout: scripts/release-per-merge.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/download-artifact@v8
@@ -285,7 +285,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           jq -r '.packages[] | [.tag, .dir, .version] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version; do
-            node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
+            node .release-tool/scripts/release-per-merge.ts notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
             # `--latest` only for the lone root package: of several packages' Releases no one is "the" latest.
             latest=--latest=false
             [ "$dir" = . ] && latest=--latest

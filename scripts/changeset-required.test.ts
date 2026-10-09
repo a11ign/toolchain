@@ -6,14 +6,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { decide, noReleaseReason, parseReleasablePaths } from "./changeset-required.mjs";
+import { decide, noReleaseReason, parseReleasablePaths } from "./changeset-required.ts";
+import { TYPE_STRIPPING_ENV } from "./node-with-types.ts";
 
-// WHAT THIS PINS (a11ign/a11ign#4127). `changeset-required.mjs` holds the DECISION (files, body and paths in; verdict and reason out), so the
+// WHAT THIS PINS (a11ign/a11ign#4127). `changeset-required.ts` holds the DECISION (files, body and paths in; verdict and reason out), so the
 // cases below RUN it, over the real file lists of screenreader-worker#25 and #26. The two workflows are read as YAML and judged on STRUCTURE
 // (triggers, permissions, `if`, `needs`), never on words: their comments say why in the very words a text match would find.
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SCRIPT = join(ROOT, "scripts", "changeset-required.mjs");
+const SCRIPT = join(ROOT, "scripts", "changeset-required.ts");
 const REUSABLE = join(ROOT, ".github", "workflows", "changeset-required.yml");
 const CI = join(ROOT, ".github", "workflows", "ci.yml");
 
@@ -134,7 +135,7 @@ function runCli(files: File[], env: Record<string, string>) {
   try {
     const list = join(dir, "files.jsonl");
     writeFileSync(list, files.map((file) => JSON.stringify(file)).join("\n"));
-    return spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", FILES_JSONL: list, ...env } });
+    return spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", FILES_JSONL: list, ...TYPE_STRIPPING_ENV, ...env } });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -188,7 +189,7 @@ test("the reusable workflow can read a pull request's files and write nothing", 
 
 test("on a merge_group entry the job succeeds without evaluating, and on a pull request every other step runs", () => {
   const steps = stepsOf(load(REUSABLE));
-  const evaluating = steps.filter((step) => /changeset-required\.mjs|gh api/.test(step.run ?? ""));
+  const evaluating = steps.filter((step) => /changeset-required\.ts|gh api/.test(step.run ?? ""));
   assert.ok(evaluating.length >= 2, "the file list is gathered and the script is run: two steps at least");
   for (const step of evaluating) assert.match(step.if ?? "", /github\.event_name\s*!=\s*'merge_group'/, step.name ?? "unnamed step");
   const explains = steps.filter((step) => /github\.event_name\s*==\s*'merge_group'/.test(step.if ?? ""));
@@ -206,7 +207,7 @@ const runsOn = (step: Step, event: string): boolean =>
     return match[1] === undefined || (match[1] === "==") === (match[2] === event);
   });
 const stepsRunningOn = (event: string): Step[] => stepsOf(load(REUSABLE)).filter((step) => runsOn(step, event));
-const PULL_REQUEST_ONLY = /changeset-required\.mjs|gh api|actions\/checkout/;
+const PULL_REQUEST_ONLY = /changeset-required\.ts|gh api|actions\/checkout/;
 const needsAPullRequest = (step: Step): boolean => PULL_REQUEST_ONLY.test(`${step.run ?? ""} ${step.uses ?? ""}`);
 
 test("a push is not evaluated and the job succeeds", () => {
@@ -237,7 +238,7 @@ test("a merge_group entry runs the one explanation step and no step that needs a
 test("the pull request's body and the paths reach the script through env, never interpolated into a shell line", () => {
   const steps = stepsOf(load(REUSABLE));
   for (const step of steps) assert.doesNotMatch(step.run ?? "", /\$\{\{/, step.name ?? "unnamed step");
-  const script = steps.find((step) => /changeset-required\.mjs/.test(step.run ?? ""));
+  const script = steps.find((step) => /changeset-required\.ts/.test(step.run ?? ""));
   assert.match(script?.env?.PR_BODY ?? "", /github\.event\.pull_request\.body/);
   assert.match(script?.env?.RELEASABLE_PATHS ?? "", /inputs\.releasable-paths/);
 });

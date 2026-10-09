@@ -1,6 +1,6 @@
 # A PULL REQUEST THAT CHANGES A RELEASABLE PATH MUST CARRY A CHANGESET OR SAY WHY NOT, IN EVERY REPOSITORY (chairman, via ceo, a11ign/a11ign#4084; row #4127).
 # screenreader-worker#25 and #26 each changed shipped code with no `.changeset/` file and merged, and nothing released them: the per-merge release
-# (`release-per-merge.yml`) releases a changeset, so a change with none is invisible to it. `scripts/changeset-required.mjs` holds the decision and
+# (`release-per-merge.yml`) releases a changeset, so a change with none is invisible to it. `scripts/changeset-required.ts` holds the decision and
 # `scripts/changeset-required.test.ts` runs it; this file only gathers the inputs.
 #
 # A CALLER passes its own `releasable-paths` as ONE space-separated string (a reusable workflow's inputs cannot be lists): its `dora` entry's
@@ -65,7 +65,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .changeset-required-tool
-          sparse-checkout: scripts/changeset-required.mjs
+          sparse-checkout: scripts/changeset-required.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: The pull request's changed files
@@ -84,4 +84,4 @@ jobs:
           FILES_JSONL: ${{ runner.temp }}/files.jsonl
           PR_BODY: ${{ github.event.pull_request.body }}
           RELEASABLE_PATHS: ${{ inputs.releasable-paths }}
-        run: node .changeset-required-tool/scripts/changeset-required.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+        run: node .changeset-required-tool/scripts/changeset-required.ts | tee -a "$GITHUB_STEP_SUMMARY"

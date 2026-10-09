@@ -1,7 +1,7 @@
 # ONE PER-MERGE RELEASE WORKFLOW, FOR EVERY REPOSITORY (chairman's CI/CD direction, a11ign/a11ign#928; row a11ign/a11ign#3712).
 # A push to `main` whose tree carries a changeset no tag has consumed is versioned on a DETACHED COMMIT, published by OIDC where the
 # package publishes, tagged and released. THERE IS NO VERSION PULL REQUEST, and `main` IS NEVER WRITTEN: its own versions and changelogs lag
-# the last tag, and nothing reads them. `scripts/release-per-merge.mjs` holds the version logic and `scripts/release-per-merge.test.ts` runs it.
+# the last tag, and nothing reads them. `scripts/release-per-merge.ts` holds the version logic and `scripts/release-per-merge.test.ts` runs it.
 #
 # A CALLER is one job, in a file of its own that keeps the name its npm trusted-publisher entry gives (see the OIDC note below):
 #
@@ -30,7 +30,7 @@
 # a caller whose one versioned package sits in a subdirectory (a11ign/lab: `packages/lab`, no workspace) names it in `lone-package-dir`, and that package is
 # tagged `vx.y.z` and its Release marked latest, exactly as a root package is; under `kind: tag` it is released though private. Unset, nothing changes. A version that is not
 # MAJOR.MINOR.PATCH, or a package whose CHANGELOG.md has no entry for it, is refused in `version`, before any tag. What a release consumed is read off the release commits
-# the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.mjs`.
+# the tags point at, so there is no single "last tag": see the head of `scripts/release-per-merge.ts`.
 #
 # A REPOSITORY NEED NOT HAVE A LOCKFILE (agent-org has none, no `packageManager`, and `@changesets/cli` is not a dependency). With one, `version`
 # runs `pnpm install --frozen-lockfile` and the repository's own `changeset`. Without, it installs nothing and runs `pnpm dlx
@@ -163,7 +163,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .release-tool
-          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout: scripts/release-per-merge.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Which changesets has no tag consumed yet?
@@ -173,7 +173,7 @@ jobs:
         run: |
           # Out of the release commit's reach: `git add -A` below must not take the tool.
           echo .release-tool >> .git/info/exclude
-          node .release-tool/scripts/release-per-merge.mjs plan | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts plan | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Which pnpm, and is there a lockfile to install from and to key a cache on?
         id: setup
         if: steps.plan.outputs.count != '0'
@@ -181,7 +181,7 @@ jobs:
         shell: bash
         env:
           PNPM_VERSION: ${{ inputs.pnpm-version }}
-        run: node .release-tool/scripts/release-per-merge.mjs setup | tee -a "$GITHUB_STEP_SUMMARY"
+        run: node .release-tool/scripts/release-per-merge.ts setup | tee -a "$GITHUB_STEP_SUMMARY"
       # An empty `version` makes the action read `packageManager`; given both, it refuses a pair that differs.
       - uses: pnpm/action-setup@v6
         if: steps.plan.outputs.count != '0'
@@ -216,7 +216,7 @@ jobs:
         shell: bash
         run: |
           git switch --detach
-          node .release-tool/scripts/release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts version | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Carry the release commit to the jobs after this one, as a bundle
         if: steps.release.outputs.released == 'true'
         env:
@@ -307,7 +307,7 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .release-tool
-          sparse-checkout: scripts/release-per-merge.mjs
+          sparse-checkout: scripts/release-per-merge.ts
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/download-artifact@v8
@@ -332,7 +332,7 @@ jobs:
           TIP: refs/remotes/origin/main
         run: |
           git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
-          node .release-tool/scripts/release-per-merge.mjs check-workflows
+          node .release-tool/scripts/release-per-merge.ts check-workflows
       - name: Push the tags, one atomic push, never forced
         env:
           SHA: ${{ needs.version.outputs.sha }}
@@ -357,7 +357,7 @@ jobs:
         shell: bash
         run: |
           jq -r '.packages[] | [.tag, .dir, .version, (.lone // false)] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version lone; do
-            node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
+            node .release-tool/scripts/release-per-merge.ts notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
             # `--latest` only for the lone package (the root's, or the one `lone-package-dir` names): of several packages' Releases no one is "the" latest. And only on the `latest` dist-tag:
             # a Release for any other is a channel's, and must not displace the Release people are sent to.
             latest=--latest=false

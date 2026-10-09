@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { assertWorkflowsHeld, buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets, workflowsTree } from "./release-per-merge.mjs";
+import { assertWorkflowsHeld, buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets, workflowsTree } from "./release-per-merge.ts";
 
 // WHAT THIS PINS, AND HOW IT READS THE WORKFLOW. `release-per-merge.yml` is read as YAML and judged on STRUCTURE (keys, permissions, `needs`,
 // `if`), never on words: the file's comments explain WHY in the very words a text match would find. The version logic is not read at all:
@@ -580,13 +580,13 @@ test("the workflow reads the tip after the caller's code has run, hands it to th
   const index = (steps: Step[], pattern: RegExp): number => steps.findIndex((step) => pattern.test(step.run ?? ""));
   const install = index(versionSteps, /pnpm install/);
   const fetchTip = index(versionSteps, /git fetch .*refs\/heads\/main:refs\/remotes\/tip\/main/);
-  const release = index(versionSteps, /release-per-merge\.mjs version/);
+  const release = index(versionSteps, /release-per-merge\.ts version/);
   assert.ok(install >= 0 && fetchTip >= 0 && release >= 0, "positive control: the three steps were found");
   assert.ok(install < fetchTip && fetchTip < release, "the tip is read after the install (which runs the caller's code) and before the release commit");
   assert.equal((versionSteps[release] as { env?: Record<string, string> }).env?.TIP, "refs/remotes/tip/main", "the version step is told where the tip is");
   assert.equal(versionSteps[install].run?.includes("TOKEN"), false, "the step that runs the caller's code holds no token");
   const tagSteps = jobs.tag.steps ?? [];
-  const check = index(tagSteps, /release-per-merge\.mjs check-workflows/);
+  const check = index(tagSteps, /release-per-merge\.ts check-workflows/);
   const push = index(tagSteps, /\bgit push\b/);
   assert.ok(check >= 0 && push >= 0 && check < push, "the tag job checks the tip's workflows before it pushes");
 });

@@ -5,9 +5,10 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { declareModule, TYPE_STRIPPING_ENV } from "./node-with-types.ts";
 
 // A SCRIPT PIPED INTO `tee` READS SUCCESS WHEN THE SCRIPT DIES (a11ign/a11ign#3766). GitHub's default `run` shell is `bash -e {0}`, WITHOUT
-// `pipefail`, so a pipeline's status is `tee`'s: `release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"` exited 0 when the script threw,
+// `pipefail`, so a pipeline's status is `tee`'s: `release-per-merge.ts version | tee -a "$GITHUB_STEP_SUMMARY"` exited 0 when the script threw,
 // the step wrote no `released` output, `version.outputs.released` fell to `false`, and a release that could not be cut read as a green run with
 // nothing to release. The workflow is read as YAML (structure, never words), and the two steps that matter are also RUN, with the release
 // script stubbed to die, in the shell GitHub would start for them.
@@ -85,7 +86,8 @@ function runStep(text: string, stepName: string, script: string): number | null 
   try {
     mkdirSync(join(dir, ".release-tool", "scripts"), { recursive: true });
     mkdirSync(join(dir, "bin"));
-    writeFileSync(join(dir, ".release-tool", "scripts", "release-per-merge.mjs"), script);
+    declareModule(join(dir, ".release-tool"));
+    writeFileSync(join(dir, ".release-tool", "scripts", "release-per-merge.ts"), script);
     writeFileSync(join(dir, "bin", "pnpm"), "#!/bin/sh\nexit 0\n");
     chmodSync(join(dir, "bin", "pnpm"), 0o755);
     // GitHub writes the step's script to a file and hands it to the shell as its last argument.
@@ -95,7 +97,7 @@ function runStep(text: string, stepName: string, script: string): number | null 
     git("init", "-q");
     git("commit", "-q", "--allow-empty", "-m", "x");
     const [file, ...args] = argvFor(shellOf(workflow, job, step));
-    const env = { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, GITHUB_STEP_SUMMARY: join(dir, "summary.md") };
+    const env = { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, GITHUB_STEP_SUMMARY: join(dir, "summary.md"), ...TYPE_STRIPPING_ENV };
     return spawnSync(file, [...args, join(dir, "step.sh")], { cwd: dir, env }).status;
   } finally {
     rmSync(dir, { recursive: true, force: true });
