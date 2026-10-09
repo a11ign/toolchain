@@ -94,7 +94,7 @@ A single-package repository has its package at the ROOT (one README, one `packag
 - run: npx --yes --package @a11ign/toolchain layout-check
 ```
 
-With the package installed, `pnpm exec layout-check [directory]` is the same. The directory defaults to the working directory and is read with `git ls-files` in a working tree, else by a walk, both ignoring `node_modules`. A failure reads:
+It resolves on a cold npm cache with no flag: `typescript` is an optional peer that admits `^6.0.3 || ^7.0.0`, because `@rslib/core` peers `^5 || ^6 || ^7` and npm takes the newest, so a `^6.0.3` peer made `npx` exit 1 with `ERESOLVE` from 0.2.0 to 0.3.0 (`scripts/npx-one-liner.test.ts` pins the two together). With the package installed, `pnpm exec layout-check [directory]` is the same. The directory defaults to the working directory and is read with `git ls-files` in a working tree, else by a walk, both ignoring `node_modules`. A failure reads:
 
 ```
 layout-check: FAIL [directory-name] packages/pdf: packages/pdf holds @a11ign/documents, so its directory should be named "documents", not "pdf"
