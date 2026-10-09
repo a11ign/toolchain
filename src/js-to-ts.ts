@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * THE JS-TO-TS CONVERSION SCRIPT: JSDoc SOURCE BECOMES TYPESCRIPT BY A SCRIPT, AND AN AGENT FIXES ONLY THE RESIDUE
  * (ADR 0043, the chairman's third direction of 2026-10-08; a11ign/a11ign#4248).
