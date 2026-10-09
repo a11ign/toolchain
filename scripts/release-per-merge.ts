@@ -76,7 +76,7 @@ function releaseTags(cwd: string): { tag: string; name: string | null; version: 
  */
 export function releasedChangesets(cwd: string): Set<string> {
   const commits = new Set(releaseTags(cwd).map(({ tag }) => git(cwd, ["rev-parse", `${tag}^{commit}`]).trim()));
-  const consumed = new Set();
+  const consumed = new Set<string>();
   for (const commit of commits) {
     // A root commit has no parent to have deleted anything from. `rev-list` says so by printing nothing, where a failed `diff` could be anything.
     if (!git(cwd, ["rev-list", "--parents", "-n1", commit]).trim().includes(" ")) continue;
@@ -196,7 +196,7 @@ function movedPins(cwd: string, latest: Map<string | null, { tag: string; versio
 /** @param {Record<string, unknown>} manifest @param {Map<string, { from: string, to: string }>} moved */
 function repinMoved(manifest: Record<string, unknown>, moved: Map<string, { from: string; to: string; }>) {
   for (const field of DEPENDENCY_FIELDS) {
-    const dependencies = /** @type {Record<string, string>} */ (manifest[field] ?? {});
+    const dependencies = (manifest[field] ?? {}) as Record<string, string>;
     for (const [name, range] of Object.entries(dependencies)) {
       const pin = moved.get(name);
       if (pin?.from === range) dependencies[name] = pin.to;
@@ -242,9 +242,10 @@ function removeFiles(cwd: string, paths: string[]) {
  */
 const releasable = ({ private: isPrivate, dir }: { private: boolean; dir: string; }, { kind, loneDir }: { kind: "npm" | "tag"; loneDir: string | null; }) => !isPrivate || (kind === "tag" && isLone(dir, loneDir));
 
+type ReleasedPackage = { name: string; dir: string; version: string; tag: string; lone: boolean };
+
 /**
  * `lone` is what the tag job reads to mark the Release `--latest`: of several packages' Releases no one is "the" latest.
- * @typedef {{ name: string, dir: string, version: string, tag: string, lone: boolean }} ReleasedPackage
  * @param {{ cwd: string, before: Map<string, string>, kind: "npm" | "tag", loneDir: string | null }} versions @returns {ReleasedPackage[]}
  */
 function packagesThatMoved({ cwd, before, kind, loneDir }: { cwd: string; before: Map<string, string>; kind: "npm" | "tag"; loneDir: string | null; }): ReleasedPackage[] {
@@ -266,7 +267,7 @@ function refuseUnreleasable(cwd: string, { name, dir, version }: ReleasedPackage
   try {
     changelogEntry(readFileSync(path, "utf8"), version);
   } catch (error) {
-    throw new Error(`${name}: ${/** @type {Error} */ (error).message}`, { cause: error });
+    throw new Error(`${name}: ${(error as Error).message}`, { cause: error });
   }
 }
 

@@ -173,7 +173,7 @@ jobs:
         run: |
           # Out of the release commit's reach: `git add -A` below must not take the tool.
           echo .release-tool >> .git/info/exclude
-          node .release-tool/scripts/release-per-merge.mjs plan | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts plan | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Which pnpm, and is there a lockfile to install from and to key a cache on?
         id: setup
         if: steps.plan.outputs.count != '0'
@@ -181,7 +181,7 @@ jobs:
         shell: bash
         env:
           PNPM_VERSION: ${{ inputs.pnpm-version }}
-        run: node .release-tool/scripts/release-per-merge.mjs setup | tee -a "$GITHUB_STEP_SUMMARY"
+        run: node .release-tool/scripts/release-per-merge.ts setup | tee -a "$GITHUB_STEP_SUMMARY"
       # An empty `version` makes the action read `packageManager`; given both, it refuses a pair that differs.
       - uses: pnpm/action-setup@v6
         if: steps.plan.outputs.count != '0'
@@ -216,7 +216,7 @@ jobs:
         shell: bash
         run: |
           git switch --detach
-          node .release-tool/scripts/release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts version | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Carry the release commit to the jobs after this one, as a bundle
         if: steps.release.outputs.released == 'true'
         env:
@@ -332,7 +332,7 @@ jobs:
           TIP: refs/remotes/origin/main
         run: |
           git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
-          node .release-tool/scripts/release-per-merge.mjs check-workflows
+          node .release-tool/scripts/release-per-merge.ts check-workflows
       - name: Push the tags, one atomic push, never forced
         env:
           SHA: ${{ needs.version.outputs.sha }}
@@ -357,7 +357,7 @@ jobs:
         shell: bash
         run: |
           jq -r '.packages[] | [.tag, .dir, .version, (.lone // false)] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version lone; do
-            node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
+            node .release-tool/scripts/release-per-merge.ts notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
             # `--latest` only for the lone package (the root's, or the one `lone-package-dir` names): of several packages' Releases no one is "the" latest. And only on the `latest` dist-tag:
             # a Release for any other is a channel's, and must not displace the Release people are sent to.
             latest=--latest=false

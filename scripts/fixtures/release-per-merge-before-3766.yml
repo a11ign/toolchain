@@ -142,7 +142,7 @@ jobs:
         run: |
           # Out of the release commit's reach: `git add -A` below must not take the tool.
           echo .release-tool >> .git/info/exclude
-          node .release-tool/scripts/release-per-merge.mjs plan | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts plan | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: pnpm/action-setup@v6
         if: steps.plan.outputs.count != '0'
       - uses: actions/setup-node@v7
@@ -156,7 +156,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           git switch --detach
-          node .release-tool/scripts/release-per-merge.mjs version | tee -a "$GITHUB_STEP_SUMMARY"
+          node .release-tool/scripts/release-per-merge.ts version | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Carry the release commit to the jobs after this one, as a bundle
         if: steps.release.outputs.released == 'true'
         env:
@@ -285,7 +285,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           jq -r '.packages[] | [.tag, .dir, .version] | @tsv' "$RUNNER_TEMP/carry/release.json" | while IFS=$'\t' read -r tag dir version; do
-            node .release-tool/scripts/release-per-merge.mjs notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
+            node .release-tool/scripts/release-per-merge.ts notes "$dir" "$version" > "$RUNNER_TEMP/notes.md"
             # `--latest` only for the lone root package: of several packages' Releases no one is "the" latest.
             latest=--latest=false
             [ "$dir" = . ] && latest=--latest

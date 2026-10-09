@@ -84,4 +84,4 @@ jobs:
           FILES_JSONL: ${{ runner.temp }}/files.jsonl
           PR_BODY: ${{ github.event.pull_request.body }}
           RELEASABLE_PATHS: ${{ inputs.releasable-paths }}
-        run: node .changeset-required-tool/scripts/changeset-required.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+        run: node .changeset-required-tool/scripts/changeset-required.ts | tee -a "$GITHUB_STEP_SUMMARY"

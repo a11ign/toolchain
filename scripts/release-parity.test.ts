@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { buildRelease } from "./release-per-merge.ts";
+import { declareModule, TYPE_STRIPPING_ENV } from "./node-with-types.ts";
 
 // PARITY WITH agent-org's OWN RELEASE (a11ign/a11ign#3964, the parity table on #3958). agent-org's `release.yml` is the model, so the shared
 // `release-per-merge.yml` must lose none of what it guarantees before agent-org calls it. G1 to G5 below are the five lines that table marked
@@ -25,7 +26,7 @@ import { buildRelease } from "./release-per-merge.ts";
 const require = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_PATH = join(HERE, "..", ".github", "workflows", "release-per-merge.yml");
-const RELEASE_SCRIPT = join(HERE, "release-per-merge.mjs");
+const RELEASE_SCRIPT = join(HERE, "release-per-merge.ts");
 const CHANGESET_BIN = require.resolve("@changesets/cli/bin.js");
 const CHANGELOG_PRESET = require.resolve("@changesets/cli/changelog");
 
@@ -94,7 +95,7 @@ function runStep(step: Step, where: { cwd: string; context: Context; env: Record
     writeFileSync(output, "");
     write(join(dir, "step.sh"), step.run ?? "");
     const own = Object.fromEntries(Object.entries(step.env ?? {}).map(([key, value]) => [key, evaluate(String(value), where.context)]));
-    const env = { PATH: process.env.PATH ?? "", HOME: dir, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: join(dir, "summary"), ...GIT_ENV, ...own, ...where.env };
+    const env = { PATH: process.env.PATH ?? "", HOME: dir, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: join(dir, "summary"), ...GIT_ENV, ...TYPE_STRIPPING_ENV, ...own, ...where.env };
     const [file, ...args] = shellArgv(step);
     const ran = spawnSync(file, [...args, join(dir, "step.sh")], { cwd: where.cwd, env, encoding: "utf8", timeout: 60_000 });
     const outputs = Object.fromEntries(readFileSync(output, "utf8").split("\n").filter(Boolean).map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
@@ -122,7 +123,8 @@ function repositoryAfterRelease(root: string, shape: Shape): void {
   git(root, "add", "-A");
   commit(root, "merge a changeset");
   mkdirSync(join(root, ".release-tool", "scripts"), { recursive: true });
-  copyFileSync(RELEASE_SCRIPT, join(root, ".release-tool", "scripts", "release-per-merge.mjs"));
+  copyFileSync(RELEASE_SCRIPT, join(root, ".release-tool", "scripts", "release-per-merge.ts"));
+  declareModule(join(root, ".release-tool"));
 }
 
 /** A `pnpm` that logs every call. `install` is the REAL pnpm when there is no lockfile (so ERR_PNPM_NO_LOCKFILE is the real one) and a no-op otherwise; `dlx`/`exec changeset` run this repository's own. */
@@ -449,7 +451,8 @@ function tagJobRun(pushRun: string, remote: { tagAppeared?: boolean; unreadable?
     const carry = join(root, "tmp", "carry");
     write(join(carry, "release.json"), JSON.stringify({ packages: PACKAGES }));
     mkdirSync(join(work, ".release-tool", "scripts"), { recursive: true });
-    copyFileSync(RELEASE_SCRIPT, join(work, ".release-tool", "scripts", "release-per-merge.mjs"));
+    copyFileSync(RELEASE_SCRIPT, join(work, ".release-tool", "scripts", "release-per-merge.ts"));
+    declareModule(join(work, ".release-tool"));
     const calls = join(root, "gh.log");
     write(join(root, "bin", "gh"), `#!/bin/bash\necho "$*" >> "${calls}"\n`);
     chmodSync(join(root, "bin", "gh"), 0o755);

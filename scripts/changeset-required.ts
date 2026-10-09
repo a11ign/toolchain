@@ -1,7 +1,7 @@
 // @ts-check
 // command: decide whether a pull request that changes a releasable path carries a changeset or a `no-release:` line
 // THE DECISION OF `.github/workflows/changeset-required.yml`, kept in a script so a test can run it (a11ign/a11ign#4127), as
-// `release-per-merge.mjs` holds the logic of `release-per-merge.yml`. The workflow only gathers the inputs.
+// `release-per-merge.ts` holds the logic of `release-per-merge.yml`. The workflow only gathers the inputs.
 //
 // THE CLASS: a pull request changes a package's shipped code, carries no changeset, and merges; nothing then releases it (screenreader-worker#25 and
 // #26, a11ign/a11ign#4084). It FAILS a pull request when BOTH hold:
@@ -31,7 +31,7 @@ const CHANGESET_FILE = /^\.changeset\/(?!README\.md$)[^/]+\.md$/;
 const NO_RELEASE_LINE = /^[ \t]*no-release:[ \t]*(.*?)[ \t]*$/;
 const PLACEHOLDER = "<reason>";
 
-/** @typedef {{ filename: string, status: string, previous_filename?: string }} ChangedFile */
+type ChangedFile = { filename: string; status: string; previous_filename?: string };
 
 /**
  * The input is ONE string because a reusable workflow's inputs cannot be lists. An entry with no trailing slash is a directory, and a leading `./` is

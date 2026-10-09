@@ -144,7 +144,7 @@ for it, and that pull request's merge, which publishes with npm trusted publishi
 
 ```
 src/                  the package: one module per `exports` key, each beside its test
-scripts/              release-per-merge.mjs (what a push to main means for the release), clean-consumer.ts (the installed-package check)
+scripts/              release-per-merge.ts (what a push to main means for the release), clean-consumer.ts (the installed-package check)
 rstest.config.ts      this repository's own test config, a call into the built package
 ```
 
