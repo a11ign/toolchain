@@ -339,6 +339,36 @@ test("root package tagged under two forms: the base is the highest of them, so t
   }
 });
 
+// a11ign/a11ign#4332: @a11ign/toolchain was flattened out of a workspace (toolchain#20), so the repository holds `@a11ign/toolchain@0.1.1` to `@0.1.5` AND the lone `v0.1.6`.
+// The release pinned before the #4121 fix counted a patch from 0.1.5 and re-cut the 0.1.6 that exists. Each shape the two tag forms can take, with the tags the repository holds.
+const tagShapes: { shape: string; tags: string[]; next: string }[] = [
+  { shape: "the lone v tag is newer than every named one (the real toolchain tags)", tags: ["@a11ign/toolchain@0.1.4", "@a11ign/toolchain@0.1.5", "v0.1.6"], next: "0.1.7" },
+  { shape: "a named tag is newer than the lone v tag", tags: ["v0.1.2", "@a11ign/toolchain@0.1.3", "@a11ign/toolchain@0.1.5"], next: "0.1.6" },
+  { shape: "only named tags", tags: ["@a11ign/toolchain@0.1.4", "@a11ign/toolchain@0.1.5"], next: "0.1.6" },
+  { shape: "only a lone v tag", tags: ["v0.1.5", "v0.1.6"], next: "0.1.7" },
+];
+for (const { shape, tags, next } of tagShapes) {
+  test(`a patch changeset on a root package releases ${next} when ${shape}`, () => {
+    const root = mkdtempSync(join(tmpdir(), "release-per-merge-"));
+    try {
+      git(root, "init", "-q", "-b", "main");
+      write(root, "package.json", manifest("@a11ign/toolchain", { version: "0.1.0" }));
+      write(root, ".changeset/config.json", JSON.stringify({ changelog: require.resolve("@changesets/cli/changelog"), commit: false, baseBranch: "main" }));
+      commit(root, "baseline");
+      commit(root, "released");
+      for (const tag of tags) git(root, "tag", tag);
+      changeset(root, "fix", { "@a11ign/toolchain": "patch" });
+      git(root, "checkout", "-q", "--detach");
+      const result = buildRelease({ cwd: root, changesetVersion, kind: "npm" });
+      assert.ok(result.released, "positive control: the release happened, so the assertion below reads a tag and not an empty list");
+      assert.deepEqual(result.packages.map(({ version }) => version), [next]);
+      assert.ok(!tags.some((tag) => tag.endsWith(`@${next}`) || tag === `v${next}`), "the expected version is not already one of the tags");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 // ---- the lone package below the root (a11ign/a11ign#3966) ---------------------------------------------------------------------------
 
 /** a11ign/lab's shape: one private package at `packages/lab`, a `lerna.json` and no pnpm workspace, last released as `v1.0.0`. */
