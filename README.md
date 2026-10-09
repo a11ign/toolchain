@@ -155,6 +155,12 @@ Four tests of `worktree-resolution` stayed behind because they exercise a11ign/a
 reads this package's `scripts/release-per-merge.ts` instead of core's `verify.ts`. `product-home` reads its default repository root from where it is
 installed, so a consumer passes `repoRoot`. Until the core deletes its originals, two sources exist.
 
+Seven more import those ten and are published the same way (phase 3, row 2): `changed-files`, `changed-packages`, `git-sandbox`, `local-import-closure`,
+`test-memory-cap`, `tree-wide-guard` and `walk-scope`, with `changed-packages`'s test. Where the original reached for `../../../scripts/`, the copy names
+its sibling under `src/lib/` (`./cli-flags.ts`, `./npm-cli-executable.ts`, `./git-env.ts`). `changed-packages` and `walk-scope` read a repository root
+from where they sit (now `../../`, this package's root in source), so a consumer of the built file works from the root it installs under. `walk-scope`
+carries its own small `knownPackages`, because the core's `ci-changed` is not published yet (a11ign/a11ign#4587).
+
 ## Building and checking this package
 
 Everything runs from the repository root (`pnpm install` first). The package IS the repository: one `package.json`, one README (this one, also the npm page), no workspace file.

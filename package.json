@@ -50,6 +50,14 @@
       "types": "./dist/js-to-ts.d.ts",
       "default": "./dist/js-to-ts.mjs"
     },
+    "./lib/changed-files": {
+      "types": "./dist/lib/changed-files.d.ts",
+      "default": "./dist/lib/changed-files.mjs"
+    },
+    "./lib/changed-packages": {
+      "types": "./dist/lib/changed-packages.d.ts",
+      "default": "./dist/lib/changed-packages.mjs"
+    },
     "./lib/cli-flags": {
       "types": "./dist/lib/cli-flags.d.ts",
       "default": "./dist/lib/cli-flags.mjs"
@@ -61,6 +69,14 @@
     "./lib/git-env": {
       "types": "./dist/lib/git-env.d.ts",
       "default": "./dist/lib/git-env.mjs"
+    },
+    "./lib/git-sandbox": {
+      "types": "./dist/lib/git-sandbox.d.ts",
+      "default": "./dist/lib/git-sandbox.mjs"
+    },
+    "./lib/local-import-closure": {
+      "types": "./dist/lib/local-import-closure.d.ts",
+      "default": "./dist/lib/local-import-closure.mjs"
     },
     "./lib/npm-cli-executable": {
       "types": "./dist/lib/npm-cli-executable.d.ts",
@@ -77,6 +93,18 @@
     "./lib/source-text": {
       "types": "./dist/lib/source-text.d.ts",
       "default": "./dist/lib/source-text.mjs"
+    },
+    "./lib/test-memory-cap": {
+      "types": "./dist/lib/test-memory-cap.d.ts",
+      "default": "./dist/lib/test-memory-cap.mjs"
+    },
+    "./lib/tree-wide-guard": {
+      "types": "./dist/lib/tree-wide-guard.d.ts",
+      "default": "./dist/lib/tree-wide-guard.mjs"
+    },
+    "./lib/walk-scope": {
+      "types": "./dist/lib/walk-scope.d.ts",
+      "default": "./dist/lib/walk-scope.mjs"
     },
     "./lib/walk-scope-declaration": {
       "types": "./dist/lib/walk-scope-declaration.d.ts",

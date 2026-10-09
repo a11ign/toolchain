@@ -19,10 +19,10 @@ const TIER_1 = [
   "sandbox-exhaustion", "source-text", "walk-scope-declaration", "walk-scope-discovery", "worktree-resolution",
 ] as const;
 
-test("the list is the ten, and it is every source under src/lib/ -- a file added there and not listed here is published by nobody's decision", () => {
-  const sources = readdirSync(LIB).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts")).map((name) => name.replace(/\.ts$/, ""));
+test("the list is the ten, and each has a source under src/lib/ (that no source is unlisted is lib-tier-2.test.ts's, over both tiers)", () => {
+  const sources = new Set(readdirSync(LIB).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts")).map((name) => name.replace(/\.ts$/, "")));
   assert.equal(TIER_1.length, 10, "positive control: the row names ten");
-  assert.deepEqual([...sources].sort(), [...TIER_1].sort());
+  assert.deepEqual(TIER_1.filter((stem) => !sources.has(stem)), []);
 });
 
 for (const stem of TIER_1) {
