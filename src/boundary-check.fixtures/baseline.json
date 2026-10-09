@@ -1,0 +1,10 @@
+[
+  {
+    "from": "src/a.ts",
+    "to": "../other-repo/src/other.ts"
+  },
+  {
+    "from": "src/gone.ts",
+    "to": "../nowhere/src/gone.ts"
+  }
+]

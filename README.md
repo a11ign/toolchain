@@ -103,6 +103,24 @@ layout-check: FAIL [directory-name] packages/pdf: packages/pdf holds @a11ign/doc
 From code, `checkLayout({ root })` and `checkLayoutTree({ "path": "text" })` (a tree listing, with text only for `package.json`, `pnpm-workspace.yaml` and `lerna.json`) return `{ ok, problems: [{ check, path, message }], message, fileCount }`.
 It does not read `lerna.json`'s own `packages` as a workspace, and it does not yet read a README sentence as the allowance for a stated departure (ADR 0043).
 
+## The boundary check
+
+`@a11ign/toolchain` is the one thing every repository consumes, so it is where a repository learns what it reaches into ANOTHER repository (epic a11ign/a11ign#4425, phase 2). **The one line** for a consumer's `ci.yml`:
+
+```yaml
+- run: npx --yes --package @a11ign/toolchain boundary-check --root=.
+```
+
+It LISTS and never fails a build for what it lists: the exit code is `0` whatever it found, and `2` only when the tree or the baseline is unreadable or the tree is EMPTY (an empty tree is never a clean report). It prints one line per crossing with the file, the line and the reached path, and `--out=<file>` also writes the JSON report. Three kinds:
+
+| kind | what it is |
+|---|---|
+| `cross-repo-import` | a relative import or `require` that climbs out of the repository root, or lands in a package directory the importer's `package.json` does not declare |
+| `tool-path` | an environment-held tool directory (a variable name containing `TOOL`) plus `/src/`, or a `toolPath`/`toolModule`/`toolUrl`/`toolRoot` call |
+| `laid-source` | a directory another repository's source is laid into: one a tracked `layers.json` declares, or a `.gitignore` entry a script, workflow or manifest line copies or clones into |
+
+`--baseline=<json>` (`[{ "from": "<file>", "to": "<reached path>" }]`) marks a matching crossing `ACCEPTED` and lists a line that matches nothing as `STALE`, so a baseline can only shrink. From code, `checkBoundary({ root, baseline })` and `checkBoundaryTree({ "path": "text" }, baseline)` return `{ readable, crossings: [{ kind, file, line, to, message, status }], stale, message, fileCount }`.
+
 ## The JS-to-TS conversion
 
 JSDoc source becomes TypeScript by a script, and an agent fixes only what the script reports as residue (ADR 0043). **The one line** (run it from the repository root; it needs `typescript` 6.x in the repository, which it loads from there because `npx` does not install an optional peer; with none, it exits `2` and names `npm install --save-dev typescript@^6.0.3`):

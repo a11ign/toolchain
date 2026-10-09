@@ -1,0 +1,5 @@
+{
+  "package.json": "{\n  \"name\": \"@x/app\",\n  \"version\": \"1.0.0\"\n}\n",
+  "scripts/shapes.mjs": "const a = `${process.env.AGENT_ORG_TOOL}/src/template.ts`;\nconst b = join(process.env.AGENT_ORG_TOOL, \"src\", \"joined.ts\");\nconst c = process.env[\"AGENT_ORG_TOOL\"] + '/src/bracket.ts';\nconst d = await import(toolModule(\"src/called.ts\"));\nconst e = execSync(\"node $AGENT_ORG_TOOL/src/shell-in-js.ts\");\nconst f = `${TOOL_VARIABLE}/src/not-the-environment.ts`;\nconst toolPath = (name) => name;\nfunction toolModule(name) { return name; }\n",
+  ".github/workflows/w.yml": "jobs:\n  run:\n    steps:\n      - run: node ${AGENT_ORG_TOOL}/src/gate.ts\n      - run: node $AGENT_ORG_TOOL/src/run.ts\n      # node $AGENT_ORG_TOOL/src/commented.ts\n"
+}

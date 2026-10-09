@@ -42,6 +42,10 @@
       "types": "./dist/layout-check.d.ts",
       "default": "./dist/layout-check.mjs"
     },
+    "./boundary-check": {
+      "types": "./dist/boundary-check.d.ts",
+      "default": "./dist/boundary-check.mjs"
+    },
     "./js-to-ts": {
       "types": "./dist/js-to-ts.d.ts",
       "default": "./dist/js-to-ts.mjs"
@@ -50,6 +54,7 @@
   },
   "bin": {
     "layout-check": "./dist/layout-check.mjs",
+    "boundary-check": "./dist/boundary-check.mjs",
     "js-to-ts": "./dist/js-to-ts.mjs"
   },
   "files": [
