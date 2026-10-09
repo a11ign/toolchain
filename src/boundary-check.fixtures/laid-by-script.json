@@ -1,0 +1,5 @@
+{
+  "package.json": "{\n  \"name\": \"@x/app\",\n  \"version\": \"1.0.0\"\n}\n",
+  ".gitignore": "node_modules\nvendored-lab\n",
+  "scripts/install.sh": "#!/bin/sh\nset -e\ncp -r ../lab-checkout/src vendored-lab\n"
+}

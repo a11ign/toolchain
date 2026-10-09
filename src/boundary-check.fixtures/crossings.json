@@ -1,0 +1,8 @@
+{
+  "package.json": "{\n  \"name\": \"@x/app\",\n  \"version\": \"1.0.0\"\n}\n",
+  "src/a.ts": "import { other } from \"../../other-repo/src/other.ts\";\nexport const a = other;\n",
+  "src/b.ts": "import { readFileSync } from \"node:fs\";\nimport { a } from \"./a.ts\";\nexport const b = [a, readFileSync];\n",
+  "scripts/load.mjs": "const root = process.cwd();\nconst gate = await import(\"file://\" + process.env.AGENT_ORG_TOOL + \"/src/gate.ts\");\nexport { root, gate };\n",
+  "layers.json": "{\n  \"layers\": {\n    \"lab\": {\n      \"path\": \"packages/lab\",\n      \"remote\": \"https://github.com/a11ign/lab.git\"\n    }\n  }\n}\n",
+  ".gitignore": "node_modules\ndist\n"
+}

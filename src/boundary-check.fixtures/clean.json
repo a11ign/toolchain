@@ -1,0 +1,12 @@
+{
+  "package.json": "{\n  \"name\": \"@x/app\",\n  \"version\": \"1.0.0\"\n}\n",
+  "src/a.ts": "export const a = 1;\n",
+  "src/b.ts": "import { readFileSync } from \"node:fs\";\nimport { a } from \"./a.ts\";\nexport const b = [a, readFileSync];\n",
+  "scripts/load.mjs": "const home = process.env.HOME + \"/src/notes\";\nconst work = `${process.env.GITHUB_WORKSPACE}/src/b.ts`;\n// import(\"file://\" + process.env.AGENT_ORG_TOOL + \"/src/gate.ts\") is only a comment\nexport { home, work };\n",
+  "scripts/setup.sh": "cp .env.example .env\ncp -r template dist\n",
+  ".gitignore": "node_modules\ndist\n.env\n*.log\n",
+  "packages/a/package.json": "{\n  \"name\": \"@x/a\",\n  \"dependencies\": {\n    \"@x/b\": \"workspace:*\"\n  }\n}\n",
+  "packages/a/src/a.ts": "import { y } from \"../../b/src/y.ts\";\nexport const a = y;\n",
+  "packages/b/package.json": "{\n  \"name\": \"@x/b\"\n}\n",
+  "packages/b/src/y.ts": "export const y = 1;\n"
+}
