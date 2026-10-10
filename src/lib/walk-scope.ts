@@ -440,8 +440,13 @@ export const NOT_WRAPPED = Object.freeze({
     ChildProcess: "UNSEEN when constructed by hand and started with `.spawn()` -- refused in a declarer instead",
     _forkChild: "Node's own IPC setup inside a forked child; no guard calls it",
   }),
-  test: Object.freeze(Object.fromEntries(["after", "afterEach", "before", "beforeEach", "describe", "it", "only",
-    "skip", "suite", "test", "todo"].map((name) => [name, "registers a test or a hook; reads nothing"]))),
+  test: Object.freeze({
+    ...Object.fromEntries(["after", "afterEach", "before", "beforeEach", "describe", "it", "only",
+    "skip", "suite", "test", "todo"].map((name) => [name, "registers a test or a hook; reads nothing"])),
+    // Node 24 added both. A host on Node 24 sees the enumeration test go red without them (a11ign/a11ign#4843).
+    expectFailure: "registers a test that is expected to fail, as `skip` and `todo` register theirs; reads nothing",
+    getTestContext: "returns the running test's context object (or undefined outside a test); reads nothing",
+  }),
   module: Object.freeze({
     Module: "a module record; loading one resolves through `_resolveFilename` and reads through `fs`, both wrapped",
     SourceMap: "parses a source map it is handed", _debug: "a debug logger",
