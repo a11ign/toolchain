@@ -17,15 +17,7 @@ Prints `VERDICT pass: 28 tests in 3 files` on this head (Node v24.21.0), the 24 
 
 **Fails before, passes after (measured on this host, Node v24.21.0).** With `src/lib/walk-scope.ts` as at `ab60ac6` (before #4847), the enumeration test fails with `['test.expectFailure', 'test.getTestContext']` and the other three pass; with `main`, which carries the two names, all four pass.
 
-**Mutation, both directions (measured; each file restored from a copy and `diff` confirmed byte-identical).**
-
-| Mutation | Result |
-|---|---|
-| drop `expectFailure` from `NOT_WRAPPED.test` | the enumeration test alone fails, naming `test.expectFailure`; the controls stay green |
-| `isObserved` always `false` | the enumeration test fails (every wrapped function reported) and the `run` test fails |
-| `isObserved` always `true` for functions | the enumeration test PASSES, as a vacuous one would; the drop-one control fails ("no function is accounted for by NOT_WRAPPED alone") and so does the growth control |
-| the test's "is named" check always true | the drop-one and growth controls fail; the enumeration test passes, which is what the controls are for |
-| the test's "is named" check never true | the enumeration test fails on every named function, and the drop-one control fails |
+Mutation: measured on this host (Node v24.21.0), each file restored from a copy and `diff`ed byte-identical -- (A) dropping `expectFailure` from `NOT_WRAPPED.test` fails the enumeration test alone, naming `test.expectFailure`, with the controls green; (B) `isObserved` always `false` fails the enumeration test and the `run` test; (C) `isObserved` always `true` for functions leaves the enumeration test PASSING, as a vacuous one would, and fails the drop-one control ("no function is accounted for by NOT_WRAPPED alone") and the growth control; (D) the test's "is named" check always true fails the drop-one and growth controls and leaves the enumeration test green, which is what the controls are for; (E) the same check never true fails the enumeration test on every named function and the drop-one control.
 
 **Not done, named.** The reverse drift (a name on `NOT_WRAPPED` for a function that is now wrapped) is checked by lab's `declared-walk-scope.test.ts` as `listedYetWrapped` and is not added here: the row asks for the unaccounted direction. A name on `NOT_WRAPPED` that this host does not export (`expectFailure` on Node 22) is legitimate and is not asserted either way.
 
