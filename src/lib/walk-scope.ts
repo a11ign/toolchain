@@ -49,8 +49,38 @@ const workerThreads: { Worker: typeof import("node:worker_threads").Worker } = r
 const nodeTest: typeof import("node:test") = require("node:test");
 const moduleApi: typeof import("node:module") = require("node:module");
 
-// REAL, because every comparison below is against a real path: on macOS `/tmp` is a link to `/private/tmp`.
-export const REPO_ROOT = fs.realpathSync.native(resolve(fileURLToPath(new URL("../../", import.meta.url))));
+/** The variable that names the project whose tree is observed, when this module is installed in somebody else's `node_modules`. */
+const PROJECT_ROOT_VARIABLE = "A11IGN_PROJECT_ROOT";
+
+/**
+ * WHOSE TREE THIS OBSERVES -- the project's, which is not always the directory two levels above this file. Installed as a dependency, that
+ * directory is the toolchain's own copy under the consumer's `node_modules`: a guard's `WALK_SCOPE` would then be relative to the wrong
+ * tree, and every read of the project falls outside it and is not observed (`repoPath` returns null), so a consumer could not import this
+ * module and kept a declared copy of it (a11ign/a11ign#4718, agent-org#522). `A11IGN_PROJECT_ROOT` names the project instead.
+ *
+ * A VALUE THAT CANNOT BE USED THROWS, and never falls back to the package-relative root: that is the toolchain's own tree, and "could not
+ * tell which tree" answered with it is the very defect the variable exists to remove. That includes the empty string and a relative path,
+ * which `export A11IGN_PROJECT_ROOT=$UNSET` and a `cd` somewhere else produce without anyone typing a wrong directory.
+ *
+ * REAL, because every comparison below is against a real path: on macOS `/tmp` is a link to `/private/tmp`.
+ */
+function projectRoot(): string {
+  const named = process.env[PROJECT_ROOT_VARIABLE];
+  if (named === undefined) return fs.realpathSync.native(resolve(fileURLToPath(new URL("../../", import.meta.url))));
+  const unusable = (why: string, cause?: unknown) =>
+    new Error(`walk-scope: ${PROJECT_ROOT_VARIABLE}=${JSON.stringify(named)} ${why}`, { cause });
+  if (!isAbsolute(named)) throw unusable("is not an absolute path: name the project's root directory in full");
+  let real: string;
+  try {
+    real = fs.realpathSync.native(named);
+  } catch (cause) {
+    throw unusable("does not name an existing directory", cause);
+  }
+  if (!fs.statSync(real).isDirectory()) throw unusable("names a file, not a directory");
+  return real;
+}
+
+export const REPO_ROOT = projectRoot();
 
 /** A read that cannot be bounded to a subtree -- a whole-repository walk. Never inside any declared scope. */
 export const WHOLE_REPOSITORY = "(the whole repository)";
