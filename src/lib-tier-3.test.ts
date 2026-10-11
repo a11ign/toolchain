@@ -8,7 +8,10 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PackageExports } from "./entries.ts";
 
@@ -32,3 +35,31 @@ for (const stem of TIER_3) {
     assert.deepEqual(manifest.exports?.[`./lib/${stem}`], { types: `./dist/lib/${stem}.d.ts`, default: `./dist/lib/${stem}.mjs` });
   });
 }
+
+/** What the CLI prints for a two-commit sandbox repository: CI checks this repo out shallow, so its own `HEAD~1` is not there to diff against. */
+function printedOutputBlock(): string {
+  const cli = fileURLToPath(new URL("./lib/ci-changed.ts", import.meta.url));
+  const repo = mkdtempSync(join(tmpdir(), "ci-changed-ansible-"));
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "pipe" });
+  try {
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(repo, "package.json"), "{}");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    writeFileSync(join(repo, "requirements-ci.txt"), "");
+    git("add", "-A");
+    git("commit", "-q", "-m", "change");
+    return execFileSync(process.execPath, [cli, "--event=merge_group", "--base=HEAD~1", `--repo=${repo}`], { cwd: repo, encoding: "utf8", env: { ...process.env, GITHUB_OUTPUT: "" } });
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+// The core's CI read an `ansible` output until the category was removed from the classifier (#4932): a consumer that still reads one gets an
+// absent key, so the removal is pinned on the OUTPUT BLOCK `ci.yml` reads, not on the type.
+test("the output block names no `ansible` key, and still names the categories that stay", () => {
+  const keys = printedOutputBlock().split("\n").filter((line) => line.includes("=")).map((line) => line.slice(0, line.indexOf("=")));
+  assert.ok(keys.includes("python"), `positive control: a category that stays is printed, got ${JSON.stringify(keys)}`);
+  assert.ok(keys.includes("ts"), "positive control: ts is printed too");
+  assert.deepEqual(keys.filter((key) => /ansible/i.test(key)), []);
+});

@@ -6,7 +6,7 @@
 // Before this, a PR ran everything: `lint.yml` had no path filter at all, and ran lint, typecheck, the
 // full TS suite and the full Python suite on a one-line docs edit exactly as it did on a capture-path
 // rewrite. `changeset-check.yml` re-derived its own "does this touch a published package" answer inline
-// in YAML, and `ansible-check.yml` carried a THIRD copy of "did the fleet's Ansible layer change" as a
+// in YAML, and a separate fleet-playbook workflow carried a THIRD copy of "did the playbooks' pin change" as a
 // third `paths:` block. Three copies of "what changed", and nothing kept them agreeing — this repo's own
 // most-repeated defect, aimed at its own CI.
 //
@@ -381,12 +381,12 @@ function docsReadersMustRun({ docs, getDocsReadingTests, repoRoot }: { docs: boo
  */
 export function jobsFor(files: string[], repoRoot: string = process.cwd()): string[] {
   const result = classify(files, knownPackages(repoRoot), { repoRoot });
-  const jobs: Exclude<keyof ClassifyResult, "packages">[] = ["ts", "python", "ansible", "docs", "board", "changeset", "rulesFitness"];
+  const jobs: Exclude<keyof ClassifyResult, "packages">[] = ["ts", "python", "docs", "board", "changeset", "rulesFitness"];
   return jobs.filter((job) => result[job]);
 }
 
 type ClassifyResult = {
-  ts: boolean; python: boolean; ansible: boolean; docs: boolean; board: boolean;
+  ts: boolean; python: boolean; docs: boolean; board: boolean;
   changeset: boolean; rulesFitness: boolean; packages: string[];
 };
 
@@ -429,10 +429,6 @@ export function classify(files: string[], allPackages: string[] = knownPackages(
   const python = files.some((f) =>
     /^packages\/[^/]+\/(python|tests)\/.*\.py$/.test(f)
     || f === "requirements-ci.txt" || f === "packages/scorer/requirements.txt");
-
-  // The playbooks are `a11ign/control`'s and LAID here (#3506), so no diff of this repository can touch them; what can change them is the tag `layers.json` pins,
-  // and the job lays that tag before it checks it. A move of the pin is therefore the one reason to re-read the playbooks.
-  const ansible = files.includes("layers.json");
 
   const docsFiles = files.filter((f) => f.startsWith("docs/") || DOC_ROOT_FILES.has(f));
   // `board` is true, and `docs` FALSE, only when EVERY doc-touching file in the diff is a board file --
@@ -483,7 +479,6 @@ export function classify(files: string[], allPackages: string[] = knownPackages(
       // #2357: #2329 was docs-only, ts=SKIPPED, main red. NO package is implicated, so only tree readers run.
       || docsReadersMustRun({ docs, getDocsReadingTests, repoRoot }),
     python,
-    ansible,
     docs,
     board,
     changeset,
@@ -498,7 +493,6 @@ function writeOutputs(result: ClassifyResult) {
   const lines = [
     `ts=${result.ts}`,
     `python=${result.python}`,
-    `ansible=${result.ansible}`,
     `docs=${result.docs}`,
     `board=${result.board}`,
     `changeset=${result.changeset}`,
@@ -598,7 +592,7 @@ async function main() {
 function fullRequiredSet(classified: ClassifyResult, allPackages: string[]): ClassifyResult {
   const enforcing = process.argv.includes("--precise");
   return {
-    ts: true, python: true, ansible: true, docs: true, board: true, rulesFitness: true,
+    ts: true, python: true, docs: true, board: true, rulesFitness: true,
     changeset: enforcing ? classified.changeset : true,
     packages: [...allPackages].sort(),
   };
