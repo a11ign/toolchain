@@ -8,6 +8,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { PackageExports } from "./entries.ts";
@@ -32,3 +33,14 @@ for (const stem of TIER_3) {
     assert.deepEqual(manifest.exports?.[`./lib/${stem}`], { types: `./dist/lib/${stem}.d.ts`, default: `./dist/lib/${stem}.mjs` });
   });
 }
+
+// The core's CI read an `ansible` output until the category was removed from the classifier (#4932): a consumer that still reads one gets an
+// absent key, so the removal is pinned on the OUTPUT BLOCK `ci.yml` reads, not on the type.
+test("the output block names no `ansible` key, and still names the categories that stay", () => {
+  const cli = fileURLToPath(new URL("./lib/ci-changed.ts", import.meta.url));
+  const printed = execFileSync(process.execPath, [cli, "--event=merge_group", "--base=HEAD~1", `--repo=${PACKAGE}`], { cwd: PACKAGE, encoding: "utf8", env: { ...process.env, GITHUB_OUTPUT: "" } });
+  const keys = printed.split("\n").filter((line) => line.includes("=")).map((line) => line.slice(0, line.indexOf("=")));
+  assert.ok(keys.includes("python"), `positive control: a category that stays is printed, got ${JSON.stringify(keys)}`);
+  assert.ok(keys.includes("ts"), "positive control: ts is printed too");
+  assert.deepEqual(keys.filter((key) => /ansible/i.test(key)), []);
+});
