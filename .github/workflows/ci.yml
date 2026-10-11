@@ -80,8 +80,8 @@ jobs:
   #
   # NO CONSUMER-INSTALL STEP (a11ign/agent-org#967 has one): that step is what a11ign's `agent-org-newest-tag` makes of an agent-org TAG, cloning it and installing from its lockfile. This
   # repository's releases are npm packages, installed from the registry, and `consumer-check` in `checks` installs the packed tarball; no consumer clones one of its tags. It versions EVERY
-  # changeset in the tree, where the release versions only those no tag has consumed: a superset, so a failure the release would meet is met here (its `plan` step needs the tags, which a
-  # depth-2 checkout does not have).
+  # changeset in the tree, where the release versions only those no tag has consumed: a superset, so a failure the release would meet is met here (which ones no tag has consumed is its
+  # `plan` step's question, and this job does not ask it).
   release-dry-run:
     runs-on: ubuntu-latest
     permissions:
@@ -89,8 +89,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Two commits: HEAD and its first parent, which is all `touched` compares. No credential is kept: nothing here pushes.
-          fetch-depth: 2
+          # The WHOLE history, as the release's own checkout takes it (`release-per-merge.yml`, `fetch-depth: 0`). `changeset version` deepens a SHALLOW clone to find the
+          # commit that added each changeset, and does so for every changeset at once: the first run of this job died in that deepening (`fatal: shallow file has changed
+          # since we read it`), a failure the release can never meet. No credential is kept: nothing here pushes.
+          fetch-depth: 0
           persist-credentials: false
       - name: Does the change touch what the release installs from?
         id: touched
@@ -117,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           scratch="$RUNNER_TEMP/release-dry-run"
-          git clone --quiet --depth=1 "file://$GITHUB_WORKSPACE" "$scratch"
+          git clone --quiet "file://$GITHUB_WORKSPACE" "$scratch"
           cd "$scratch"
           pnpm install --frozen-lockfile
           pnpm exec changeset version
