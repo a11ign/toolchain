@@ -30,7 +30,7 @@
  * risking the real one to prove the guard fires.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,6 +112,20 @@ export function repoFingerprint(root: string): RepoFingerprint {
 /** The default target: THIS checkout's repository root, two directories up from this file. */
 const REAL_REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
+/**
+ * The sandbox directory is still there after its removal. Before #5520 that surfaced only in another
+ * process's teardown, naming a directory and not the test that made it; this error names both.
+ */
+export class SandboxNotRemovedError extends Error {
+  constructor(dir: string) {
+    super(
+      `withGitSandbox: the sandbox directory ${dir} survived its removal (pid ${process.pid}) -- ` +
+      "the removal did not take effect, so something outlived the test that made it"
+    );
+    this.name = "SandboxNotRemovedError";
+  }
+}
+
 export class RepoIdentityMovedError extends Error {
   constructor(root: string, before: RepoFingerprint, after: RepoFingerprint) {
     super(
@@ -128,8 +142,21 @@ export class RepoIdentityMovedError extends Error {
  * afterward. Fingerprints `root` before and after and throws `RepoIdentityMovedError` if HEAD, identity,
  * or bareness moved — regardless of whether `fn` passed. `root` defaults to this checkout; pass a decoy
  * directory to test the guard itself without risking the real one.
+ *
+ * Throws `SandboxNotRemovedError` when the directory is still there after `remove` ran, so a surviving
+ * sandbox fails the test that made it. `remove` is a seam only for that test: it makes the removal a no-op.
  */
-export function withGitSandbox<T>(fn: (sandbox: GitSandbox) => T, root: string = REAL_REPO_ROOT): T {
+export interface SandboxOptions {
+  remove?: (dir: string) => void;
+}
+
+const removeTree = (dir: string) => rmSync(dir, { recursive: true, force: true });
+
+export function withGitSandbox<T>(
+  fn: (sandbox: GitSandbox) => T,
+  root: string = REAL_REPO_ROOT,
+  { remove = removeTree }: SandboxOptions = {},
+): T {
   const before = repoFingerprint(root);
   // REALPATH'd: on macOS `/var` is a symlink to `/private/var`, and `git status` reports paths against
   // the resolved root -- an unresolved dir here made a caller's later path comparison against `git
@@ -141,8 +168,9 @@ export function withGitSandbox<T>(fn: (sandbox: GitSandbox) => T, root: string =
     sandbox.run(["init", "--quiet"]);
     result = fn(sandbox);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    remove(dir);
   }
+  if (existsSync(dir)) throw new SandboxNotRemovedError(dir);
   const after = repoFingerprint(root);
   if (after.head !== before.head || after.userName !== before.userName ||
       after.userEmail !== before.userEmail || after.bare !== before.bare) {
