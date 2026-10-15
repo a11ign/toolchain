@@ -14,7 +14,10 @@ The row's Acceptance names the primary checkout `/home/agent/repos/toolchain`, w
 - (A) `finding.code !== "OPEN"` replaced by `finding.code === "CLOSED"` (a CANNOT_TELL owner passes): 2 tests fail, `an owner that could not be read is CANNOT_TELL and fails, never open` and `an owner reworded into parentheses ... fails`.
 - (B) `failures` returns `all` (everything fails): 2 tests fail, `the same fixture with the owner OPEN passes` and `a qualified owner is read in ITS repository`.
 Unmutated: `node --test src/refusal-owners-are-open.test.ts` exits 0 with 13 of 13 passing.
+(C) The `./refusal-owners-are-open` entry removed from `package.json`: `src/package.test.ts`'s subpath test goes red, because it imports the reader BY ITS PACKAGE NAME from the build. `package.json` restored from a copy, diff-identical.
 
-**Also green on this head:** `pnpm test` (`VERDICT pass: 408 tests in 35 files`, after `pnpm install --frozen-lockfile`), `pnpm run build`, `pnpm run lint`, `pnpm run typecheck`, and `import('./dist/refusal-owners-are-open.mjs')` lists the eight exported functions.
+**Also green on this head:** `pnpm test` (`VERDICT pass: 409 tests in 35 files`, after `pnpm install --frozen-lockfile`), `pnpm run build`, `pnpm run lint`, `pnpm run typecheck`, and the subpath import lists the eight exported functions.
+
+**Why the subpath test is in `src/package.test.ts`.** The subpath is what a consumer imports, so it is tested through the `exports` map, not the source file. That needs `dist`, which `pnpm test` builds first; the row's Acceptance runs the reader's own test file with no build, so the subpath test is kept out of that file.
 
 **What the checks do NOT show.** The row's Done-when 1 is a release, which this pull request does not perform: the export is not on npm until toolchain's release run publishes it. The core and `a11ign/lab` copies are not deleted here; those are the two follow-up rows.
