@@ -50,6 +50,10 @@
       "types": "./dist/js-to-ts.d.ts",
       "default": "./dist/js-to-ts.mjs"
     },
+    "./refusal-owners-are-open": {
+      "types": "./dist/refusal-owners-are-open.d.ts",
+      "default": "./dist/refusal-owners-are-open.mjs"
+    },
     "./lib/changed-files": {
       "types": "./dist/lib/changed-files.d.ts",
       "default": "./dist/lib/changed-files.mjs"
