@@ -72,3 +72,20 @@ test("every exports target that names a built file exists in dist, the types fil
   assert.ok(built.length >= WORKER_LOADED.length, "positive control: the targets under dist were found");
   assert.deepEqual(built.filter((target) => !existsSync(`${PACKAGE}${target}`)), []);
 });
+
+/** The eight names the reader exports, as a consumer's `import` of the subpath sees them: a rename or a dropped export is red here. */
+const READER_EXPORTS = [
+  "describe", "failures", "findings", "ownersOf", "readIssueState", "refusalsInPackageJson", "refusalsInTree", "refusalsInWorkflow",
+];
+
+test("the refusal-owner subpath, imported BY NAME from the build, reads a refusal and asks its owner's state as the reader does", async () => {
+  // Imported by the package's own name, so the `exports` map is what resolves it; `pretest` has built `dist`, which the map names.
+  const reader = await import("@a11ign/toolchain/refusal-owners-are-open");
+  assert.deepEqual(Object.keys(reader).sort(), READER_EXPORTS, "the subpath exports the eight names and nothing else");
+  const refusal = { file: "package.json", where: 'script "gate:lab-held"', kind: "REFUSED" as const, text: " held by a11ign/a11ign#5179." };
+  assert.deepEqual(reader.ownersOf(refusal.text), [{ repo: "a11ign/a11ign", number: 5179 }]);
+  const closed = reader.failures(reader.findings([refusal], () => ({ code: "CLOSED", why: "fixture" })));
+  assert.equal(closed.length, 1, "positive control: a CLOSED owner fails through the built subpath");
+  assert.equal(reader.describe(closed[0]), 'package.json script "gate:lab-held": REFUSED names a11ign/a11ign#5179 as its owner, and a11ign/a11ign#5179 is CLOSED');
+  assert.deepEqual(reader.failures(reader.findings([refusal], () => ({ code: "OPEN", why: "fixture" }))), []);
+});
