@@ -1,0 +1,10 @@
+{
+ "repository": "a11ign/a11ign.github.io",
+ "commit": "1fdd4602974a12e0266de26ad35a44bd82294820",
+ "reading": "git ls-tree -r --name-only <commit>, kept to the paths dependabot-config reads: package.json (trimmed to name, private, workspaces), pnpm-workspace.yaml, requirements*.txt, pyproject.toml and .github/workflows/*. The extras file is the one the consumer pull request adds. The tree listing, not the code.",
+ "tree": {
+  ".github/workflows/deploy.yml": "",
+  ".github/workflows/preview.yml": "",
+  "package.json": "{\"name\": \"a11ign.github.io\"}"
+ }
+}
