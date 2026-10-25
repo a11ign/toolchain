@@ -119,6 +119,13 @@ function workspaceOf(tree: LayoutTree, root: Manifest | undefined): Workspace | 
 
 const nameOf = ({ manifest }: Member): string => manifest.name ?? "(unnamed)";
 
+/** The names of the packages a tree's workspace holds, and the root's own: every package a workspace links by itself. Sorted, once each. */
+export function workspacePackageNames(tree: LayoutTree): string[] {
+  const root = MANIFEST in tree ? parseManifest(tree, MANIFEST) : undefined;
+  const names = [root?.name, ...(workspaceOf(tree, root)?.members ?? []).map(({ manifest }) => manifest.name)];
+  return [...new Set(names.filter((name): name is string => name !== undefined))].sort();
+}
+
 function workspaceProblems(workspace: Workspace | undefined): LayoutProblem[] {
   if (workspace === undefined) return [];
   const packages = workspace.members.filter(({ manifest }) => !isShell(manifest));
@@ -211,12 +218,16 @@ function walk(root: string, dir: string): string[] {
   });
 }
 
-const READ_AS_TEXT = new Set([MANIFEST, WORKSPACE_FILE, "lerna.json"]);
+const READ_AS_TEXT = [MANIFEST, WORKSPACE_FILE, "lerna.json"];
 
-/** A directory as a `LayoutTree`: every file outside `node_modules`, with the text of the three files the check reads. */
-export function readLayoutTree(root: string): LayoutTree {
+/**
+ * A directory as a `LayoutTree`: every file outside `node_modules`, with the text of the three files the check reads, and of any file
+ * whose name `alsoAsText` lists (`dependabot-config` reads its own extras file this way).
+ */
+export function readLayoutTree(root: string, alsoAsText: readonly string[] = []): LayoutTree {
+  const asText = new Set([...READ_AS_TEXT, ...alsoAsText]);
   const files = (existsSync(join(root, ".git")) ? listWithGit(root) : walk(root, "")).map(posix).filter((path) => !inNodeModules(path));
-  return Object.fromEntries(files.map((path) => [path, READ_AS_TEXT.has(basename(path)) ? readFileSync(join(root, path), "utf8") : ""]));
+  return Object.fromEntries(files.map((path) => [path, asText.has(basename(path)) ? readFileSync(join(root, path), "utf8") : ""]));
 }
 
 /** The check over the repository at `root`. */

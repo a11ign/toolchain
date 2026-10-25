@@ -262,11 +262,12 @@ test("every bin starts with a node shebang and runs through its own symlink, as 
   assert.ok(bins.length > 0, "package.json declares a bin, or this test checks nothing");
   for (const [name, target] of bins) {
     const file = join(PACKAGE, target);
+    const args = (root: string): string[] => (name === "dependabot-config" ? ["--write", "--root", root] : [root]);
     assert.equal(readFileSync(file, "utf8").split("\n")[0], "#!/usr/bin/env node", `${target} (bin ${name}) begins with a shebang`);
     const dir = mkdtempSync(join(tmpdir(), "bin-link-"));
     try {
       symlinkSync(file, join(dir, name));
-      onDisk(CLEAN, "walk", (root) => assert.equal(spawnSync(join(dir, name), [root], { encoding: "utf8" }).status, 0, `${name} runs directly`));
+      onDisk(CLEAN, "walk", (root) => assert.equal(spawnSync(join(dir, name), args(root), { encoding: "utf8" }).status, 0, `${name} runs directly`));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

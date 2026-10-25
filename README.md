@@ -2,7 +2,7 @@
 
 The one test and build toolchain every a11ign repository shares ([ADR 0043](https://github.com/a11ign/a11ign/blob/main/docs/adr/0043-one-toolchain-for-every-repository.md)):
 the rstest config as a function of what differs per repository, the `node:test` shim that lets an existing suite run on rstest unedited, the run
-record and verdict line, the Rslib presets, and the TypeScript base. It is a package and not a template because the config is eight recorded
+record and verdict line, the Rslib presets, the TypeScript base, and the one Dependabot configuration. It is a package and not a template because the config is eight recorded
 decisions (the header of `src/rstest-config.ts`), and five copies would drift.
 
 Install it as a `devDependency` beside its peers: `@rstest/core` (`^0.12.3`), and `@rslib/core` (`^1.0.3`) if the repository builds. `@rstest/coverage-v8`
@@ -136,6 +136,41 @@ It renames every `.mjs`/`.cjs`/`.js` source outside `node_modules`, `dist` and `
 - Files edited OUTSIDE the converted set are printed: they are the pull request's `Outside-Region:` lines. A reference it did not rewrite (a bare name that may be another file, a path inside a template literal, a `CHANGELOG`) is printed too.
 - A second run changes nothing and reports the same residue. Exit `0` clean, `1` residue remains, `2` nothing could be read or a misspelt flag; an empty tree is `2`, never a pass.
 - TypeScript 7 has no JavaScript API (a11ign/a11ign#3729), so under it the command refuses with that sentence. A `@typedef` or an untyped parameter is not converted; it is residue (`TS2304`, `TS7006`).
+
+## Dependency updates
+
+Every repository's `.github/dependabot.yml` is an OUTPUT of this package (A11-253, under A11-251), so Dependabot asks the same of all of them and the file cannot drift unseen.
+
+```
+pnpm exec dependabot-config --write [--root <dir>]   # writes <root>/.github/dependabot.yml
+pnpm exec dependabot-config --check [--root <dir>]   # exit 0 in step, 1 drift or a missing file (prints the diff and the --write command), 2 unreadable
+```
+
+**What every ecosystem gets**, and a repository cannot change: weekly on Monday at 05:23 UTC (off the hour, because on the hour is when every scheduled job on GitHub queues); ONE group, `<ecosystem>-minor-and-patch`, for patch and minor updates, so a major matches no group and is its own pull request; `commit-message.prefix: deps`; `cooldown.default-days: 7`; `open-pull-requests-limit: 10`; and no `labels:`, so Dependabot applies `dependencies` and the ecosystem's own label (`javascript`, `github_actions`, `python`) and creates them. The ecosystems are read from the tree: `npm` at `/` when a root `package.json` exists, `pip` for each directory holding a `requirements*.txt` or `pyproject.toml` (not under `fixtures`, `*.fixtures` or a virtual environment), `github-actions` at `/` when `.github/workflows/` holds a file. The file carries no toolchain version, so a toolchain release changes it only when the template does.
+
+**The npm `ignore` list** is `FROZEN` (`@a11ign/toolchain/dependabot-frozen`: the packages whose versions policy freezes, each with its reason), then the workspace's own packages and the root's, then the repository's extras. A name appears once. To freeze a package, add it to `FROZEN` and release: the next `--write` carries it everywhere. A test in control fails when a `layers.*.package` of `deploy-pins.json` is not in `FROZEN`; the NVDA pick (`@guidepup/guidepup`, `@guidepup/setup`) is not written as a package name in that manifest, so its reason is stated in `FROZEN` instead.
+
+**Extras** are `.github/dependabot-extra.json`, keyed by ecosystem, and only for what a repository owns alone. Any other key is refused, so no repository can opt out of the schedule, the groups or the freeze:
+
+```json
+{
+  "npm": { "directories": ["/", "/ui"], "versioning-strategy": "increase", "ignore": [{ "name": "serve", "reason": "one line: why this repository must not take it" }] },
+  "github-actions": { "ignore": [{ "name": "a11ign/a11ign", "reason": "its pin is written by a generator" }] },
+  "pip": { "ignore": [] }
+}
+```
+
+`directories` and `versioning-strategy` are npm's. Several directories are written as `directories:` in ONE entry, so one group pull request covers them.
+
+**What a consumer runs**: the check in its own tests or `ci.yml`, from the toolchain version it installs. When a release changes the template, that toolchain bump fails the check until `--write` regenerates the file; an ordinary bump of any other package passes.
+
+**The conventions A11-254 and A11-255 rely on**, exported by `@a11ign/toolchain/dependabot-config` (`DEPENDABOT_GROUP_SUFFIX = "-minor-and-patch"`, `DEPENDABOT_COMMIT_PREFIX = "deps"`, `dependabotGroupName(ecosystem)`):
+
+- the author is `dependabot[bot]`;
+- the title starts `deps:`. Dependabot writes the next word as `bump` in some repositories and `Bump` in others, so match it without regard to case;
+- a group pull request names `<ecosystem>-minor-and-patch` in its title and branch, and `dependabot/fetch-metadata` reports it as `dependency-group`;
+- a pull request with no group is a major, or a non-semver Actions sha move;
+- the labels are Dependabot's defaults: `dependencies` plus the ecosystem's.
 
 ## The TypeScript base
 

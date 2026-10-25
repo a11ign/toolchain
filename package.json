@@ -42,6 +42,14 @@
       "types": "./dist/layout-check.d.ts",
       "default": "./dist/layout-check.mjs"
     },
+    "./dependabot-config": {
+      "types": "./dist/dependabot-config.d.ts",
+      "default": "./dist/dependabot-config.mjs"
+    },
+    "./dependabot-frozen": {
+      "types": "./dist/dependabot-frozen.d.ts",
+      "default": "./dist/dependabot-frozen.mjs"
+    },
     "./boundary-check": {
       "types": "./dist/boundary-check.d.ts",
       "default": "./dist/boundary-check.mjs"
@@ -135,7 +143,8 @@
   "bin": {
     "layout-check": "./dist/layout-check.mjs",
     "boundary-check": "./dist/boundary-check.mjs",
-    "js-to-ts": "./dist/js-to-ts.mjs"
+    "js-to-ts": "./dist/js-to-ts.mjs",
+    "dependabot-config": "./dist/dependabot-config.mjs"
   },
   "files": [
     "dist",

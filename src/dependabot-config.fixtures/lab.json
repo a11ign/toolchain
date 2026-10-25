@@ -1,0 +1,14 @@
+{
+ "repository": "a11ign/lab",
+ "commit": "eba7fbc6261ee1d970b269950e1405d76a8a5b40",
+ "reading": "git ls-tree -r --name-only <commit>, kept to the paths dependabot-config reads: package.json (trimmed to name, private, workspaces), pnpm-workspace.yaml, requirements*.txt, pyproject.toml and .github/workflows/*. The extras file is the one the consumer pull request adds. The tree listing, not the code.",
+ "tree": {
+  ".github/workflows/auto-arm.yml": "",
+  ".github/workflows/capture-check.yml": "",
+  ".github/workflows/ci.yml": "",
+  ".github/workflows/release-checks.yml": "",
+  ".github/workflows/release.yml": "",
+  "package.json": "{\"name\": \"@a11ign/lab\", \"private\": true}",
+  ".github/dependabot-extra.json": "{\"npm\": {\"ignore\": [{\"name\": \"@a11ign/control\", \"reason\": \"not on the registry, so a run that reads it fails (#3789)\"}, {\"name\": \"@a11ign/nvda-speech\", \"reason\": \"not on the registry, so a run that reads it fails (#3789)\"}]}}"
+ }
+}

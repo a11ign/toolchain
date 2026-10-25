@@ -1,0 +1,26 @@
+{
+ "repository": "a11ign/agent-org",
+ "commit": "c9fa379203ebef03005558a0b34b453080078a5b",
+ "reading": "git ls-tree -r --name-only <commit>, kept to the paths dependabot-config reads: package.json (trimmed to name, private, workspaces), pnpm-workspace.yaml, requirements*.txt, pyproject.toml and .github/workflows/*. The extras file is the one the consumer pull request adds. The tree listing, not the code.",
+ "tree": {
+  ".github/workflows/auto-arm.yml": "",
+  ".github/workflows/board-outside.yml": "",
+  ".github/workflows/ci.yml": "",
+  ".github/workflows/org-reports.yml": "",
+  ".github/workflows/outside-nightly.yml": "",
+  ".github/workflows/outside-trunk.yml": "",
+  ".github/workflows/release.yml": "",
+  "package.json": "{\"name\": \"agent-org\"}",
+  "plugins/atomic-reviewer/package.json": "{\"name\": \"@agent-org/plugin-atomic-reviewer\", \"private\": true}",
+  "plugins/github/package.json": "{\"name\": \"@agent-org/plugin-github\", \"private\": true}",
+  "plugins/linear/package.json": "{\"name\": \"@agent-org/plugin-linear\", \"private\": true}",
+  "plugins/local/package.json": "{\"name\": \"@agent-org/plugin-local\", \"private\": true}",
+  "plugins/slack/package.json": "{\"name\": \"@agent-org/plugin-slack\", \"private\": true}",
+  "plugins/tailscale/package.json": "{\"name\": \"@agent-org/plugin-tailscale\", \"private\": true}",
+  "plugins/telegram/package.json": "{\"name\": \"@agent-org/plugin-telegram\", \"private\": true}",
+  "src/packaging/fixtures/host-units/package.json": "{\"name\": \"fixture-project\", \"private\": true}",
+  "src/packaging/fixtures/project-tree/package.json": "{\"name\": \"fixture-project\", \"private\": true}",
+  "ui/package.json": "{\"name\": \"agent-org-ui\", \"private\": true}",
+  ".github/dependabot-extra.json": "{\"npm\": {\"directories\": [\"/\", \"/ui\"]}}"
+ }
+}
