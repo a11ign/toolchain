@@ -125,6 +125,17 @@ test("Python files in test data and virtual environments are not a project", () 
   assert.equal(updatesOf(tree).some((update) => update["package-ecosystem"] === "pip"), false);
 });
 
+test("only a workflow YAML file means github-actions: a README under .github/workflows does not", () => {
+  const readmeOnly: LayoutTree = { "package.json": manifest({ name: "x" }), ".github/workflows/README.md": "" };
+  assert.equal(updatesOf(readmeOnly).some((update) => update["package-ecosystem"] === "github-actions"), false);
+  assert.ok(updatesOf({ ...readmeOnly, ".github/workflows/ci.yaml": "" }).some((update) => update["package-ecosystem"] === "github-actions"), "negative control: a .yaml workflow counts");
+});
+
+test("a Python directory YAML could misread is refused, not written", () => {
+  assert.throws(() => generateDependabotConfig({ "package.json": manifest({ name: "x" }), "docs #1/requirements.txt": "" }), /Python project in \/docs #1 has a name the generator will not write/);
+  assert.throws(() => generateDependabotConfig({ "package.json": manifest({ name: "x" }), "a: b/pyproject.toml": "" }), /will not write/);
+});
+
 test("a repository whose package is not at the root says so, and gets no root npm entry", () => {
   const updates = updatesOf(MIDDLEWARE_ONLY);
   assert.deepEqual(updates.map((update) => [update["package-ecosystem"], update.directory]), [["npm", "/middleware"], ["github-actions", "/"]]);
@@ -222,6 +233,9 @@ test("the extras schema refuses every key that would opt a repository out of the
     [{ npm: { ignore: "x" } }, /npm\.ignore must be an array/],
     [{ npm: { directories: [] } }, /npm\.directories must be a non-empty array/],
     [{ npm: { directories: ["ui"] } }, /npm\.directories must be a non-empty array of absolute directories/],
+    [{ npm: { directories: ["/../x"] } }, /npm\.directories must be a non-empty array/],
+    [{ npm: { directories: ["//"] } }, /npm\.directories must be a non-empty array/],
+    [{ npm: { directories: ["/a/"] } }, /npm\.directories must be a non-empty array/],
     [{ npm: { "versioning-strategy": "yolo" } }, /versioning-strategy must be one of/],
     [[], /must be an object keyed by ecosystem/],
   ];

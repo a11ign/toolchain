@@ -70,7 +70,9 @@ const ALLOWED_KEYS: Record<DependabotEcosystem, readonly string[]> = {
   "github-actions": ["ignore"],
 };
 const ECOSYSTEMS = Object.keys(ALLOWED_KEYS) as DependabotEcosystem[];
-const DIRECTORY = /^\/[\w.@/-]*$/;
+/** An absolute directory written plainly: no `..`, no empty segment, and nothing YAML would read as a comment or a mapping. */
+const DIRECTORY = /^\/(?:[\w.@-]+(?:\/[\w.@-]+)*)?$/;
+const isPlainDirectory = (path: string): boolean => DIRECTORY.test(path) && !path.split("/").includes("..");
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const refuse = (message: string): never => {
@@ -93,7 +95,7 @@ function ignoreOf(value: unknown, where: string): ExtraIgnore[] {
 
 function directoriesOf(value: unknown, where: string): string[] {
   const paths = Array.isArray(value) ? value : [];
-  if (paths.length === 0 || !paths.every((path) => typeof path === "string" && DIRECTORY.test(path))) {
+  if (paths.length === 0 || !paths.every((path) => typeof path === "string" && isPlainDirectory(path))) {
     return refuse(`${where} must be a non-empty array of absolute directories such as "/" or "/ui"`);
   }
   return paths as string[];
@@ -133,11 +135,15 @@ type Entry = { ecosystem: DependabotEcosystem; directories: string[]; ignore: Ig
 const PIP_MANIFEST = /^(requirements[^/]*\.txt|pyproject\.toml)$/;
 /** A directory whose Python files are test data or an environment: Dependabot has nothing to keep current there. */
 const NOT_A_PROJECT = /(^|\/)([^/]*\.fixtures?|fixtures?|\.?venv)(\/|$)/;
+const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 const directoryOf = (path: string): string => (path.includes("/") ? `/${path.slice(0, path.lastIndexOf("/"))}` : "/");
 
 function pipDirectories(tree: LayoutTree): string[] {
   const manifests = Object.keys(tree).filter((path) => PIP_MANIFEST.test(path.slice(path.lastIndexOf("/") + 1)) && !NOT_A_PROJECT.test(path));
-  return [...new Set(manifests.map(directoryOf))].sort();
+  const directories = [...new Set(manifests.map(directoryOf))].sort();
+  const odd = directories.find((directory) => !isPlainDirectory(directory));
+  if (odd !== undefined) throw new Error(`dependabot-config: the Python project in ${odd} has a name the generator will not write into YAML; rename the directory`);
+  return directories;
 }
 
 /** The directories an ecosystem is updated in: what the repository says, else what the tree holds; empty when it holds none. */
@@ -146,7 +152,7 @@ function directoriesFor(ecosystem: DependabotEcosystem, tree: LayoutTree, extras
   if (said !== undefined) return said;
   if (ecosystem === "npm") return "package.json" in tree ? ["/"] : [];
   if (ecosystem === "pip") return pipDirectories(tree);
-  return Object.keys(tree).some((path) => path.startsWith(".github/workflows/")) ? ["/"] : [];
+  return Object.keys(tree).some((path) => WORKFLOW_FILE.test(path)) ? ["/"] : [];
 }
 
 /** The first of each name, in order: the first reason a name was given is the one shown. */
