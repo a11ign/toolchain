@@ -172,6 +172,22 @@ pnpm exec dependabot-config --check [--root <dir>]   # exit 0 in step, 1 drift o
 - a pull request with no group is a major, or a non-semver Actions sha move;
 - the labels are Dependabot's defaults: `dependencies` plus the ecosystem's.
 
+### Patch, minor and Actions updates approve and queue themselves (A11-254)
+
+`--write` also writes `.github/workflows/dependabot-auto.yml`, and `--check` fails, with the diff, when it has drifted. The file is the same in every repository. Dependabot pull requests were already armed by `auto-arm.yml`, but `merge-queue-main` wants one approving review and nothing gave it, so they waited for a person. Now they merge when `gate` is green, with no person and no agent turn. It has three jobs:
+
+- **`approve`** (`pull_request_target`; only when the actor and the author are `dependabot[bot]`, the base is `main` and the head is in the repository). It reads the update with `dependabot/fetch-metadata`, pinned by SHA. It approves, as the Octo STS App, when the update type is `semver-patch` or `semver-minor` (the highest in a group), or the update is a GitHub Actions one with no type (a SHA move), AND every commit on the pull request is authored by `dependabot[bot]`, committed by it or by GitHub, and verified. A major, npm or Actions, is never approved: it says why in a `::notice::`. The review body carries `<!-- dependabot-auto:approve -->`. It reads the commits again after approving and takes the approval back if a commit that is not Dependabot's arrived meanwhile. Then it dispatches `auto-arm.yml`'s `arm-approved`, which arms the pull request (so `--check` fails when `auto-arm.yml` has no `arm-approved` job).
+- **`withdraw`** (`pull_request_target`, `synchronize`, by anyone but Dependabot, on a Dependabot pull request). `main` keeps stale approvals, so when a commit on the branch is not Dependabot's the job dismisses this workflow's own approvals: the reviews by `octo-sts[bot]` that carry the marker. Another reviewer's review is never touched.
+- **`red`** (`workflow_run` of `ci`, failed, for a Dependabot branch's `pull_request` run or a merge-queue entry). It reads each failed job's log and keeps the lines that name the failure (agent-org's `ERROR_LINE` without `NOT_THE_FAILURE`, the last 30). A failure of every failed job that reads as infrastructure (a lost runner, a rate limit or a network error, with no failing assertion) on attempt 1 of a `pull_request` run is rerun once (`gh run rerun --failed`). Anything else is commented on the pull request: the failing jobs, their log links and their error lines in a fenced block, as data, under a marker (`<!-- dependabot-auto:red <head-sha> <run-id>/<attempt> -->`) so a run is never commented twice. Turning a group that stays red, or a major, into a ticket is the board's (A11-255).
+
+**The identity can approve nothing else, by two walls.** The policy mints only for a run of `main`'s `dependabot-auto.yml` started by `dependabot[bot]`, and the workflow approves only what `approve` decides. Each repository hand-writes two Octo STS policies, because their `sub` carries the repository's immutable id (`gh api repos/a11ign/<repo> --jq .id`; the owner is `320310787`), which is not in the tree. `--check` reads both and fails, naming the file and the field, unless:
+
+- `.github/chainguard/dependabot-approve.sts.yaml`: `subject: repo:a11ign@320310787/<repo>@<id>:pull_request`; `job_workflow_ref: a11ign/<repo>/\.github/workflows/dependabot-auto\.yml@refs/heads/main`; `event_name: pull_request_target`; `actor_id: "49699333"` (dependabot[bot]'s id) and `actor: dependabot\[bot\]`; permissions exactly `pull_requests: write`.
+- `.github/chainguard/dependabot-guard.sts.yaml`: `subject_pattern: repo:a11ign@320310787/<repo>@<id>:(pull_request|ref:refs/heads/main)` (a `workflow_run` presents the `main` ref); the same `job_workflow_ref`; `event_name: pull_request_target|workflow_run`; permissions exactly `pull_requests: write` and `actions: write`. It queues, withdraws, reruns and comments, and cannot review.
+- both name the same repository, and no other workflow under `.github/workflows/` submits an approving review (`--approve`, `APPROVE`, `-a` on `gh pr review`) or mints `dependabot-approve`.
+
+If the approval reads `REVIEW_REQUIRED` and not `APPROVED`, the App's review did not count under the ruleset: approve a scratch Dependabot pull request, read `reviewDecision`, and add `contents: read` to the approve policy and to `--check`'s expected permissions only if that is what made it count.
+
 ## The TypeScript base
 
 ```json

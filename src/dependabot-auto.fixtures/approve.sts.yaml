@@ -1,0 +1,9 @@
+issuer: https://token.actions.githubusercontent.com
+subject: repo:a11ign@320310787/lab@777:pull_request
+claim_pattern:
+  job_workflow_ref: a11ign/lab/\.github/workflows/dependabot-auto\.yml@refs/heads/main
+  event_name: pull_request_target
+  actor_id: "49699333"
+  actor: dependabot\[bot\]
+permissions:
+  pull_requests: write

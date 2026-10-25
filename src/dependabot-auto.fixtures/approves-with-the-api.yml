@@ -1,0 +1,7 @@
+name: approve-with-the-api
+on: [pull_request_target]
+jobs:
+  approve:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh api -X POST "repos/$R/pulls/$PR/reviews" -f event=APPROVE

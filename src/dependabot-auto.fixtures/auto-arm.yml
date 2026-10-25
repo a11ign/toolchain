@@ -1,0 +1,9 @@
+name: auto-arm
+on: { workflow_dispatch: {} }
+jobs:
+  arm:
+    runs-on: ubuntu-latest
+    steps: [{ run: "echo arm" }]
+  arm-approved:
+    runs-on: ubuntu-latest
+    steps: [{ run: "echo arm-approved" }]

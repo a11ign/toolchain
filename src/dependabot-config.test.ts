@@ -20,6 +20,7 @@ import {
 } from "./dependabot-config.ts";
 import { FROZEN } from "./dependabot-frozen.ts";
 import type { LayoutTree } from "./layout-check.ts";
+import { APPROVE_POLICY_FILE, AUTO_ARM_FILE, DEPENDABOT_AUTO_FILE, GUARD_POLICY_FILE, generateDependabotAuto } from "./dependabot-auto.ts";
 
 const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./dependabot-config.fixtures/", import.meta.url));
@@ -298,7 +299,14 @@ function onDisk(tree: LayoutTree, body: (disk: Disk) => void): void {
     rmSync(root, { recursive: true, force: true });
   }
 }
-const LAB_ON_DISK = (): LayoutTree => ({ ...fixture("lab"), "package.json": manifest({ name: "@a11ign/lab" }) });
+/** What `--check` also reads (A11-254): the two policies, which a repository hand-writes, and the `auto-arm.yml` whose `arm-approved` queues an approval. */
+const WITH_APPROVAL = (tree: LayoutTree): LayoutTree => ({
+  ...tree,
+  [APPROVE_POLICY_FILE]: readFileSync(`${FIXTURES.replace("dependabot-config.fixtures", "dependabot-auto.fixtures")}approve.sts.yaml`, "utf8"),
+  [GUARD_POLICY_FILE]: readFileSync(`${FIXTURES.replace("dependabot-config.fixtures", "dependabot-auto.fixtures")}guard.sts.yaml`, "utf8"),
+  [AUTO_ARM_FILE]: readFileSync(`${FIXTURES.replace("dependabot-config.fixtures", "dependabot-auto.fixtures")}auto-arm.yml`, "utf8"),
+});
+const LAB_ON_DISK = (): LayoutTree => WITH_APPROVAL({ ...fixture("lab"), "package.json": manifest({ name: "@a11ign/lab" }) });
 
 test("--check passes on what --write made, and fails with the diff and the fix when the file is edited by hand", () => {
   onDisk(LAB_ON_DISK(), ({ root, run }) => {
@@ -335,8 +343,61 @@ test("--check fails when the file is missing, and when a frozen ignore is delete
   });
 });
 
+test("--write also writes dependabot-auto.yml, and --check fails with its diff when that file is edited by hand or missing (A11-254)", () => {
+  onDisk(LAB_ON_DISK(), ({ root, run }) => {
+    const wrote = run("--write", "--root", root);
+    assert.match(wrote.log.join(), /dependabot-auto\.yml/);
+    const path = join(root, DEPENDABOT_AUTO_FILE);
+    assert.equal(readFileSync(path, "utf8"), generateDependabotAuto());
+    assert.equal(run("--check", "--root", root).code, 0);
+
+    writeFileSync(path, readFileSync(path, "utf8").replace("[opened, reopened, synchronize]", "[opened, reopened, synchronize, labeled]"));
+    const drifted = run("--check", "--root", root);
+    assert.equal(drifted.code, 1);
+    assert.match(drifted.error.join("\n"), /^dependabot-config: FAIL \.github\/workflows\/dependabot-auto\.yml drifted from the template/);
+    assert.match(drifted.error.join("\n"), /^\+ {5}types: \[opened, reopened, synchronize\]$/m);
+
+    rmSync(path);
+    assert.match(run("--check", "--root", root).error.join("\n"), /dependabot-auto\.yml does not exist; it should be:/);
+  });
+});
+
+test("--check fails, naming the file and the field, when the approving policy loses its actor pin or is missing, and when another workflow approves (A11-254)", () => {
+  onDisk(LAB_ON_DISK(), ({ root, run }) => {
+    run("--write", "--root", root);
+    assert.equal(run("--check", "--root", root).code, 0, "positive control: the policies and workflows as written pass");
+    const policy = join(root, APPROVE_POLICY_FILE);
+    const good = readFileSync(policy, "utf8");
+
+    writeFileSync(policy, good.replace(/ {2}actor_id: .*\n/, ""));
+    const unpinned = run("--check", "--root", root);
+    assert.equal(unpinned.code, 1);
+    assert.match(unpinned.error.join("\n"), /^dependabot-config: FAIL \.github\/chainguard\/dependabot-approve\.sts\.yaml: claim_pattern\.actor_id is missing, expected "49699333"$/m);
+
+    rmSync(policy);
+    assert.match(run("--check", "--root", root).error.join("\n"), /dependabot-approve\.sts\.yaml: does not exist/);
+    writeFileSync(policy, good);
+    assert.equal(run("--check", "--root", root).code, 0);
+
+    writeFileSync(join(root, ".github/workflows/review-bot.yml"), "jobs:\n  r:\n    steps:\n      - run: gh pr review 1 --approve\n");
+    const approver = run("--check", "--root", root);
+    assert.equal(approver.code, 1);
+    assert.match(approver.error.join("\n"), /FAIL \.github\/workflows\/review-bot\.yml: submits an approving review/);
+  });
+});
+
+test("a repository with no workflow of its own is written WITH a github-actions entry, because --write gives it dependabot-auto.yml, and --check then passes (A11-254)", () => {
+  onDisk(WITH_APPROVAL({ "package.json": manifest({ name: "x" }) }), ({ root, run }) => {
+    rmSync(join(root, AUTO_ARM_FILE));
+    assert.equal(existsSync(join(root, ".github/workflows/dependabot-auto.yml")), false, "positive control: the repository has no workflow yet");
+    assert.equal(run("--write", "--root", root).code, 0);
+    assert.match(readFileSync(join(root, DEPENDABOT_FILE), "utf8"), /package-ecosystem: github-actions/);
+    assert.doesNotMatch(run("--check", "--root", root).error.join("\n"), /dependabot\.yml drifted/, "the config written is the config checked");
+  });
+});
+
 test("--check fails when the workspace gains a package and the file was not regenerated", () => {
-  onDisk({ "package.json": manifest({ name: "root", private: true }), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n', "packages/a/package.json": manifest({ name: "@x/a" }) }, ({ root, run }) => {
+  onDisk(WITH_APPROVAL({ "package.json": manifest({ name: "root", private: true }), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n', "packages/a/package.json": manifest({ name: "@x/a" }) }), ({ root, run }) => {
     run("--write", "--root", root);
     assert.equal(run("--check", "--root", root).code, 0);
     mkdirSync(join(root, "packages/b"), { recursive: true });
@@ -363,7 +424,7 @@ test("the command refuses an unknown flag, no mode, no root value and an unreada
 });
 
 test("--root=<dir> is the same as --root <dir>, and writeDependabotConfig makes .github when it is absent", () => {
-  onDisk({ "package.json": manifest({ name: "x" }) }, ({ root, run }) => {
+  onDisk(WITH_APPROVAL({ "package.json": manifest({ name: "x" }) }), ({ root, run }) => {
     assert.equal(run("--write", `--root=${root}`).code, 0);
     assert.equal(writeDependabotConfig({ root }), join(root, DEPENDABOT_FILE));
     assert.equal(run("--check", `--root=${root}`).code, 0);
@@ -380,7 +441,7 @@ test("lineDiff shows only what changed, in order", () => {
 test("the built bin writes and checks a directory, as `pnpm exec dependabot-config` does", () => {
   const bin = join(PACKAGE, "dist", "dependabot-config.mjs");
   assert.ok(existsSync(bin), "dist/dependabot-config.mjs is built (pnpm test builds first); a missing bin is the failure, not a skip");
-  onDisk({ "package.json": manifest({ name: "x" }) }, ({ root }) => {
+  onDisk(WITH_APPROVAL({ "package.json": manifest({ name: "x" }) }), ({ root }) => {
     assert.equal(spawnSync("node", [bin, "--check", "--root", root], { encoding: "utf8" }).status, 1, "no file yet is drift");
     assert.equal(spawnSync("node", [bin, "--write", "--root", root], { encoding: "utf8" }).status, 0);
     assert.equal(spawnSync("node", [bin, "--check", "--root", root], { encoding: "utf8" }).status, 0);
