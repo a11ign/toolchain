@@ -235,7 +235,15 @@ export function generateDependabotConfig(tree: LayoutTree): string {
   return [...HEADER, "version: 2", "updates:", ...entries.flatMap(renderEntry)].join("\n") + "\n";
 }
 
-const readTree = (root: string): LayoutTree => readLayoutTree(root, ["dependabot-extra.json"]);
+/**
+ * The tree the file is generated from. `--write` makes `dependabot-auto.yml` too, so the repository HAS a workflow once it has run, and the tree
+ * says so before it has: otherwise a repository with no workflow would be written without a github-actions entry and then fail `--check`. An empty
+ * tree stays empty, because it is refused.
+ */
+function readTree(root: string): LayoutTree {
+  const tree = readLayoutTree(root, ["dependabot-extra.json"]);
+  return Object.keys(tree).length === 0 ? tree : { ...tree, [DEPENDABOT_AUTO_FILE]: "" };
+}
 
 /** The file `--write` would make for the repository at `root`. */
 export const generateFor = (root: string): string => generateDependabotConfig(readTree(root));

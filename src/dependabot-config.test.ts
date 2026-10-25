@@ -361,6 +361,16 @@ test("--check fails, naming the file and the field, when the approving policy lo
   });
 });
 
+test("a repository with no workflow of its own is written WITH a github-actions entry, because --write gives it dependabot-auto.yml, and --check then passes (A11-254)", () => {
+  onDisk(WITH_APPROVAL({ "package.json": manifest({ name: "x" }) }), ({ root, run }) => {
+    rmSync(join(root, AUTO_ARM_FILE));
+    assert.equal(existsSync(join(root, ".github/workflows/dependabot-auto.yml")), false, "positive control: the repository has no workflow yet");
+    assert.equal(run("--write", "--root", root).code, 0);
+    assert.match(readFileSync(join(root, DEPENDABOT_FILE), "utf8"), /package-ecosystem: github-actions/);
+    assert.doesNotMatch(run("--check", "--root", root).error.join("\n"), /dependabot\.yml drifted/, "the config written is the config checked");
+  });
+});
+
 test("--check fails when the workspace gains a package and the file was not regenerated", () => {
   onDisk(WITH_APPROVAL({ "package.json": manifest({ name: "root", private: true }), "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n', "packages/a/package.json": manifest({ name: "@x/a" }) }), ({ root, run }) => {
     run("--write", "--root", root);

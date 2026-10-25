@@ -9,12 +9,14 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import {
   APPROVE_POLICY_FILE, AUTO_ARM_FILE, DEPENDABOT_ACTOR_ID, DEPENDABOT_AUTO_FILE, GUARD_POLICY_FILE, autoProblems, findOtherApprovers, generateDependabotAuto,
-  verifyPolicies, type AutoFiles,
+  readAutoFiles, verifyPolicies, type AutoFiles,
 } from "./dependabot-auto.ts";
 import { APPROVAL_MARKER, LOG_PATTERNS } from "./dependabot-auto-scripts.ts";
 import { jobOf, withJob, type Call, type Context, type JobRun, type Route } from "./dependabot-auto.fixtures/harness.ts";
@@ -490,6 +492,19 @@ test("a missing policy is named and says how to write it; two policies for two r
   const guardOther = edit(GUARD_POLICY_FILE, /lab/g, "other");
   assert.match(messages(guardOther).join("\n"), /dependabot-guard\.sts\.yaml: names the repository other, but .*dependabot-approve\.sts\.yaml names lab/);
   assert.match(messages({ ...GOOD, [APPROVE_POLICY_FILE]: "issuer: x\n  nested: list\n" }).join("\n"), /line 2 is indented under a key that has no map/);
+});
+
+test("a policy is read as YAML reads it: a comment after a quoted value, CRLF line ends and a directory named like a workflow are not defects", () => {
+  assert.deepEqual(messages(edit(APPROVE_POLICY_FILE, '"49699333"', '"49699333" # dependabot[bot]')), []);
+  assert.deepEqual(messages({ ...GOOD, [APPROVE_POLICY_FILE]: GOOD[APPROVE_POLICY_FILE].replaceAll("\n", "\r\n") }), []);
+  const root = mkdtempSync(join(tmpdir(), "dependabot-auto-read-"));
+  try {
+    mkdirSync(join(root, ".github/workflows/not-a-file.yml"), { recursive: true });
+    writeFileSync(join(root, ".github/workflows/real.yml"), "name: real\n");
+    assert.deepEqual(Object.keys(readAutoFiles(root)), [".github/workflows/real.yml"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("any other workflow that submits an approval, or mints the approving identity, is named; a comment or a read of the decision is not", () => {

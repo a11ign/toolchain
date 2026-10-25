@@ -202,26 +202,30 @@ export type AutoFiles = Record<string, string>;
 
 type Policy = { top: Record<string, string>; maps: Record<string, Record<string, string>> };
 
+/** A value as YAML reads it for the shapes a policy uses: quoted (with or without a comment after it) or plain (a ` #` starts a comment). */
 const unquote = (value: string): string => {
-  const quoted = /^"(.*)"$/.exec(value) ?? /^'(.*)'$/.exec(value);
+  const quoted = /^"([^"]*)"\s*(?:#.*)?$/.exec(value) ?? /^'([^']*)'\s*(?:#.*)?$/.exec(value);
   return quoted === null ? value.replace(/\s+#.*$/, "") : quoted[1];
 };
 
-/** The policy file's shape: `key: value` at the top, and one level of `key:` then indented `key: value`. Anything else is refused by name. */
-function parsePolicy(text: string): Policy | string {
+/** A policy file the parser cannot read, named by line. */
+class PolicyUnreadable extends Error {}
+
+/** The policy file's shape: `key: value` at the top, and one level of `key:` then indented `key: value`. Anything else is refused by line. */
+function parsePolicy(text: string): Policy {
   const policy: Policy = { top: {}, maps: {} };
   let open: string | undefined;
-  for (const [index, raw] of text.split("\n").entries()) {
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
     if (raw.trim() === "" || raw.trim().startsWith("#")) continue;
     const line = /^( *)([A-Za-z_][\w-]*):(?: +(.*))?$/.exec(raw);
-    if (line === null || (line[1].length !== 0 && line[1].length !== 2)) return `line ${index + 1} is not \`key: value\` or an indented \`key: value\` under a key`;
+    if (line === null || (line[1].length !== 0 && line[1].length !== 2)) throw new PolicyUnreadable(`line ${index + 1} is not \`key: value\` or an indented \`key: value\` under a key`);
     const [, indent, key, value = ""] = line;
     if (indent === "") {
       open = value === "" ? key : undefined;
       if (value === "") policy.maps[key] = {};
       else policy.top[key] = unquote(value.trim());
     } else if (open === undefined) {
-      return `line ${index + 1} is indented under a key that has no map`;
+      throw new PolicyUnreadable(`line ${index + 1} is indented under a key that has no map`);
     } else {
       policy.maps[open][key] = unquote(value.trim());
     }
@@ -255,31 +259,61 @@ const sameEntries = (found: Record<string, string>, wanted: Record<string, strin
   return keys.length === Object.keys(wanted).length && keys.every((key) => found[key] === wanted[key]);
 };
 
+/** A field that should read exactly `wanted`: no problem when it does. */
+const fieldProblem = (file: string, field: string, found: string | undefined, wanted: string): AutoProblem[] =>
+  found === wanted ? [] : [{ file, message: `${field} is ${found === undefined ? "missing" : JSON.stringify(found)}, expected ${JSON.stringify(wanted)}` }];
+
+const OWNED_SUBJECT = /^repo:a11ign@(\d+)\/([\w.-]+)@(\d+)(:.*)$/;
+
+/** The subject: which key holds it, the owner id and the tail. The repository it names is the one the claims are checked against. */
+function subjectProblems(kind: PolicyKind, policy: Policy): { repo: string; problems: AutoProblem[] } {
+  const { file, subjectKey } = kind;
+  const other = subjectKey === "subject" ? "subject_pattern" : "subject";
+  const subject = policy.top[subjectKey];
+  const named = subject === undefined ? null : OWNED_SUBJECT.exec(subject);
+  const misplaced = policy.top[other] === undefined ? [] : [{ file, message: `has ${other}, expected ${subjectKey}` }];
+  const unknown = Object.keys(policy.top).filter((key) => ![subjectKey, "issuer", other].includes(key)).map((key) => ({ file, message: `has the key ${key}, which this policy does not take` }));
+  if (named === null) {
+    const shown = subject === undefined ? "missing" : JSON.stringify(subject);
+    return { repo: "<repo>", problems: [...misplaced, ...unknown, { file, message: `${subjectKey} is ${shown}, expected repo:a11ign@${OWNER_ID}/<repo>@<repository id>${kind.subjectTail}` }] };
+  }
+  const owner = fieldProblem(file, "subject owner id", named[1], OWNER_ID);
+  return { repo: named[2], problems: [...misplaced, ...unknown, ...owner, ...fieldProblem(file, `${subjectKey} tail`, named[4], kind.subjectTail)] };
+}
+
+/** The claims: main's copy of this workflow, the event, and for the approving policy dependabot[bot]'s id and login; no claim this policy does not take. */
+function claimProblems(kind: PolicyKind, claims: Record<string, string>, repo: string): AutoProblem[] {
+  const { file } = kind;
+  const actor = kind === APPROVE
+    ? [...fieldProblem(file, "claim_pattern.actor_id", claims.actor_id, DEPENDABOT_ACTOR_ID), ...fieldProblem(file, "claim_pattern.actor", claims.actor, "dependabot\\[bot\\]")]
+    : [];
+  const unknown = Object.keys(claims).filter((key) => !kind.claims.includes(key)).map((key) => ({ file, message: `claim_pattern has the claim ${key}, which this policy does not take` }));
+  return [
+    ...fieldProblem(file, "claim_pattern.job_workflow_ref", claims.job_workflow_ref, `a11ign/${escapeDots(repo)}/\\.github/workflows/dependabot-auto\\.yml@refs/heads/main`),
+    ...fieldProblem(file, "claim_pattern.event_name", claims.event_name, kind.eventName),
+    ...actor,
+    ...unknown,
+  ];
+}
+
 /** What is wrong with one policy, by field. `[]` is a policy that binds what it must. */
 function policyProblems(kind: PolicyKind, text: string | undefined): AutoProblem[] {
   const { file } = kind;
   if (text === undefined) return [{ file, message: `does not exist. Write it with the repository's id (\`gh api repos/a11ign/<repo> --jq .id\`); the README's "Dependency updates" section shows it` }];
-  const policy = parsePolicy(text);
-  if (typeof policy === "string") return [{ file, message: policy }];
-  const problem = (field: string, found: string | undefined, wanted: string): AutoProblem[] =>
-    found === wanted ? [] : [{ file, message: `${field} is ${found === undefined ? "missing" : JSON.stringify(found)}, expected ${JSON.stringify(wanted)}` }];
-  const other = kind.subjectKey === "subject" ? "subject_pattern" : "subject";
-  const subject = policy.top[kind.subjectKey];
-  const named = subject === undefined ? null : /^repo:a11ign@(\d+)\/([\w.-]+)@(\d+)(:.*)$/.exec(subject);
-  const repo = named?.[2] ?? "<repo>";
-  const claims = policy.maps.claim_pattern ?? {};
-  const unknownTop = Object.keys(policy.top).filter((key) => ![kind.subjectKey, "issuer"].includes(key));
+  let policy: Policy;
+  try {
+    policy = parsePolicy(text);
+  } catch (cause) {
+    if (cause instanceof PolicyUnreadable) return [{ file, message: cause.message }];
+    throw cause;
+  }
+  const { repo, problems } = subjectProblems(kind, policy);
+  const permissions = policy.maps.permissions ?? {};
   return [
-    ...problem("issuer", policy.top.issuer, ISSUER),
-    ...(policy.top[other] === undefined ? [] : [{ file, message: `has ${other}, expected ${kind.subjectKey}` }]),
-    ...unknownTop.filter((key) => key !== other).map((key) => ({ file, message: `has the key ${key}, which this policy does not take` })),
-    ...(named === null ? [{ file, message: `${kind.subjectKey} is ${subject === undefined ? "missing" : JSON.stringify(subject)}, expected repo:a11ign@${OWNER_ID}/<repo>@<repository id>${kind.subjectTail}` }]
-      : [...problem("subject owner id", named[1], OWNER_ID), ...problem(`${kind.subjectKey} tail`, named[4], kind.subjectTail)]),
-    ...problem("claim_pattern.job_workflow_ref", claims.job_workflow_ref, `a11ign/${escapeDots(repo)}/\\.github/workflows/dependabot-auto\\.yml@refs/heads/main`),
-    ...problem("claim_pattern.event_name", claims.event_name, kind.eventName),
-    ...(kind === APPROVE ? [...problem("claim_pattern.actor_id", claims.actor_id, DEPENDABOT_ACTOR_ID), ...problem("claim_pattern.actor", claims.actor, "dependabot\\[bot\\]")] : []),
-    ...Object.keys(claims).filter((key) => !kind.claims.includes(key)).map((key) => ({ file, message: `claim_pattern has the claim ${key}, which this policy does not take` })),
-    ...(sameEntries(policy.maps.permissions ?? {}, kind.permissions) ? [] : [{ file, message: `permissions are ${JSON.stringify(policy.maps.permissions ?? {})}, expected exactly ${JSON.stringify(kind.permissions)}` }]),
+    ...fieldProblem(file, "issuer", policy.top.issuer, ISSUER),
+    ...problems,
+    ...claimProblems(kind, policy.maps.claim_pattern ?? {}, repo),
+    ...(sameEntries(permissions, kind.permissions) ? [] : [{ file, message: `permissions are ${JSON.stringify(permissions)}, expected exactly ${JSON.stringify(kind.permissions)}` }]),
   ];
 }
 
@@ -332,7 +366,9 @@ export function autoProblems(files: AutoFiles): AutoProblem[] {
 /** The files `autoProblems` reads, from disk: the policies, `auto-arm.yml` and each workflow. */
 export function readAutoFiles(root: string): AutoFiles {
   const workflows = join(root, ".github/workflows");
-  const names = existsSync(workflows) ? readdirSync(workflows).filter((name) => /\.ya?ml$/.test(name)).map((name) => `.github/workflows/${name}`) : [];
+  const names = existsSync(workflows)
+    ? readdirSync(workflows, { withFileTypes: true }).filter((entry) => entry.isFile() && /\.ya?ml$/.test(entry.name)).map((entry) => `.github/workflows/${entry.name}`)
+    : [];
   const paths = [...new Set([APPROVE_POLICY_FILE, GUARD_POLICY_FILE, ...names])].filter((path) => existsSync(join(root, path)));
   return Object.fromEntries(paths.map((path) => [path, readFileSync(join(root, path), "utf8")]));
 }
