@@ -36,7 +36,7 @@
 import { mkdirSync, readFileSync, realpathSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readLayoutTree, workspacePackageNames, type LayoutTree } from "./layout-check.ts";
+import { readLayoutTree, workspacePackageNames, type LayoutTree, type Output } from "./layout-check.ts";
 import { FROZEN, type FrozenPackage } from "./dependabot-frozen.ts";
 
 export type DependabotEcosystem = "npm" | "pip" | "github-actions";
@@ -82,8 +82,8 @@ function ignoreOf(value: unknown, where: string): ExtraIgnore[] {
   return value.map((item: unknown, index) => {
     const at = `${where}[${index}]`;
     if (!isRecord(item)) return refuse(`${at} must be { name, reason }`);
-    const unknown = Object.keys(item).filter((key) => key !== "name" && key !== "reason");
-    if (unknown.length > 0) return refuse(`${at} has the key "${unknown[0]}", which is not accepted (only name and reason)`);
+    const extraKey = Object.keys(item).find((key) => key !== "name" && key !== "reason");
+    if (extraKey !== undefined) return refuse(`${at} has the key "${extraKey}", which is not accepted (only name and reason)`);
     const { name, reason } = item;
     if (typeof name !== "string" || name.trim() === "") return refuse(`${at} needs a name`);
     if (typeof reason !== "string" || reason.trim() === "" || /[\r\n]/.test(reason)) return refuse(`${at} (${name}) needs a one-line reason: an ignore is a decision, and the file shows why`);
@@ -101,8 +101,8 @@ function directoriesOf(value: unknown, where: string): string[] {
 
 function ecosystemExtras(ecosystem: DependabotEcosystem, value: unknown): EcosystemExtras {
   if (!isRecord(value)) return refuse(`${ecosystem} must be an object`);
-  const unknown = Object.keys(value).find((key) => !ALLOWED_KEYS[ecosystem].includes(key));
-  if (unknown !== undefined) return refuse(`${ecosystem} has the key "${unknown}", which is not accepted (allowed: ${ALLOWED_KEYS[ecosystem].join(", ")})`);
+  const extraKey = Object.keys(value).find((key) => !ALLOWED_KEYS[ecosystem].includes(key));
+  if (extraKey !== undefined) return refuse(`${ecosystem} has the key "${extraKey}", which is not accepted (allowed: ${ALLOWED_KEYS[ecosystem].join(", ")})`);
   const extras: EcosystemExtras = {};
   if ("ignore" in value) extras.ignore = ignoreOf(value.ignore, `${ecosystem}.ignore`);
   if ("directories" in value) extras.directories = directoriesOf(value.directories, `${ecosystem}.directories`);
@@ -122,8 +122,8 @@ export function parseExtras(text: string): DependabotExtras {
     throw new Error(`dependabot-config: ${DEPENDABOT_EXTRA_FILE} is not JSON`, { cause });
   }
   if (!isRecord(parsed)) return refuse("must be an object keyed by ecosystem (npm, pip, github-actions)");
-  const unknown = Object.keys(parsed).find((key) => !ECOSYSTEMS.includes(key as DependabotEcosystem));
-  if (unknown !== undefined) return refuse(`has the key "${unknown}", which is not an ecosystem (npm, pip, github-actions)`);
+  const notAnEcosystem = Object.keys(parsed).find((key) => !ECOSYSTEMS.includes(key as DependabotEcosystem));
+  if (notAnEcosystem !== undefined) return refuse(`has the key "${notAnEcosystem}", which is not an ecosystem (npm, pip, github-actions)`);
   return Object.fromEntries(Object.entries(parsed).map(([ecosystem, value]) => [ecosystem, ecosystemExtras(ecosystem as DependabotEcosystem, value)]));
 }
 
@@ -149,19 +149,35 @@ function directoriesFor(ecosystem: DependabotEcosystem, tree: LayoutTree, extras
   return Object.keys(tree).some((path) => path.startsWith(".github/workflows/")) ? ["/"] : [];
 }
 
-/** The ignore list in the order it is written, once per name: the first reason a name was given is the one shown. */
+/** The first of each name, in order: the first reason a name was given is the one shown. */
+function onceEach(ignored: Ignored[]): Ignored[] {
+  const seen = new Set<string>();
+  return ignored.filter(({ name }) => {
+    const first = !seen.has(name);
+    seen.add(name);
+    return first;
+  });
+}
+
+/** The ignore list in the order it is written: frozen, then the workspace's own (npm only: they are npm packages), then the repository's extras. */
 function ignoresFor(ecosystem: DependabotEcosystem, tree: LayoutTree, extras: DependabotExtras): Ignored[] {
   const frozen: readonly FrozenPackage[] = ecosystem === "npm" ? FROZEN : [];
   const linked = ecosystem === "npm" ? workspacePackageNames(tree).map((name) => ({ name, reason: "a workspace package: pnpm links it and `changeset version` owns its version" })) : [];
-  const own = (extras[ecosystem]?.ignore ?? []);
-  const named = new Set<string>();
-  return [...frozen.map(({ name, reason }) => ({ name, reason: `FROZEN: ${reason}` })), ...linked, ...own].filter(({ name }) => !named.has(name) && named.add(name));
+  const own = extras[ecosystem]?.ignore ?? [];
+  return onceEach([...frozen.map(({ name, reason }) => ({ name, reason: `FROZEN: ${reason}` })), ...linked, ...own]);
 }
 
-function entriesOf(tree: LayoutTree, extras: DependabotExtras): Entry[] {
-  return ECOSYSTEMS.map((ecosystem) => ({ ecosystem, directories: directoriesFor(ecosystem, tree, extras), ignore: ignoresFor(ecosystem, tree, extras), versioningStrategy: extras[ecosystem]?.["versioning-strategy"] }))
-    .filter(({ directories }) => directories.length > 0);
+function entryFor(ecosystem: DependabotEcosystem, tree: LayoutTree, extras: DependabotExtras): Entry {
+  return {
+    ecosystem,
+    directories: directoriesFor(ecosystem, tree, extras),
+    ignore: ignoresFor(ecosystem, tree, extras),
+    versioningStrategy: extras[ecosystem]?.["versioning-strategy"],
+  };
 }
+
+const entriesOf = (tree: LayoutTree, extras: DependabotExtras): Entry[] =>
+  ECOSYSTEMS.map((ecosystem) => entryFor(ecosystem, tree, extras)).filter(({ directories }) => directories.length > 0);
 
 const HEADER = [
   "# GENERATED by `dependabot-config --write` (@a11ign/toolchain). DO NOT EDIT BY HAND: `dependabot-config --check` fails when this file differs from its output.",
@@ -222,24 +238,40 @@ export function writeDependabotConfig({ root }: { root: string }): string {
   return path;
 }
 
-/** A line diff, `-` for what is committed and `+` for what the generator writes; unchanged lines are context. Both sides are short files. */
-export function lineDiff(committed: string, generated: string): string[] {
-  const a = committed.split("\n");
-  const b = generated.split("\n");
+/** `common[i][j]`: how many lines the tails `a[i..]` and `b[j..]` have in common, in order. */
+function commonTails(a: string[], b: string[]): number[][] {
   const common = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
   for (let i = a.length - 1; i >= 0; i -= 1) {
     for (let j = b.length - 1; j >= 0; j -= 1) common[i][j] = a[i] === b[j] ? common[i + 1][j + 1] + 1 : Math.max(common[i + 1][j], common[i][j + 1]);
   }
+  return common;
+}
+
+/** A line diff, `-` for what is committed and `+` for what the generator writes; unchanged lines are context. Both sides are short files. */
+export function lineDiff(committed: string, generated: string): string[] {
+  const a = committed.split("\n");
+  const b = generated.split("\n");
+  const common = commonTails(a, b);
   const out: string[] = [];
   let i = 0;
   let j = 0;
   while (i < a.length || j < b.length) {
-    if (i < a.length && j < b.length && a[i] === b[j]) { out.push(`  ${a[i]}`); i += 1; j += 1; }
-    else if (j >= b.length || (i < a.length && common[i + 1][j] >= common[i][j + 1])) { out.push(`- ${a[i]}`); i += 1; }
-    else { out.push(`+ ${b[j]}`); j += 1; }
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      out.push(`  ${a[i]}`);
+      i += 1;
+      j += 1;
+    } else if (j >= b.length || (i < a.length && common[i + 1][j] >= common[i][j + 1])) {
+      out.push(`- ${a[i]}`);
+      i += 1;
+    } else {
+      out.push(`+ ${b[j]}`);
+      j += 1;
+    }
   }
   return out;
 }
+
+const writeCommand = (root: string): string => (root === process.cwd() ? "dependabot-config --write" : `dependabot-config --write --root ${root}`);
 
 export type DependabotCheck = { ok: boolean; message: string };
 
@@ -249,29 +281,34 @@ export function checkDependabotConfig({ root }: { root: string }): DependabotChe
   const path = join(root, DEPENDABOT_FILE);
   const committed = existsSync(path) ? readFileSync(path, "utf8") : undefined;
   if (committed === generated) return { ok: true, message: `dependabot-config: ok (${DEPENDABOT_FILE} is what --write produces)` };
-  const fix = `run \`dependabot-config --write${root === process.cwd() ? "" : ` --root ${root}`}\` (\`pnpm exec dependabot-config --write\`) and commit ${DEPENDABOT_FILE}`;
+  const fix = `run \`${writeCommand(root)}\` (\`pnpm exec dependabot-config --write\` in the repository) and commit ${DEPENDABOT_FILE}`;
   const shown = committed === undefined ? `${DEPENDABOT_FILE} does not exist; it should be:\n${generated}` : lineDiff(committed, generated).filter((line) => !line.startsWith("  ")).join("\n");
   return { ok: false, message: `dependabot-config: FAIL ${DEPENDABOT_FILE} drifted from the template (- committed, + generated):\n${shown}\ndependabot-config: ${fix}` };
 }
 
 const EXIT = { ok: 0, drift: 1, unreadable: 2 } as const;
 const USAGE = "usage: dependabot-config (--write | --check) [--root <dir>]";
-export type Output = { log: (line: string) => void; error: (line: string) => void };
 type Options = { mode: "write" | "check"; root: string };
 
 function parseArgs(argv: string[]): Options {
   let mode: Options["mode"] | undefined;
   let root = process.cwd();
-  for (let at = 0; at < argv.length; at += 1) {
-    const arg = argv[at];
-    if (arg === "--write" || arg === "--check") mode = arg.slice(2) as Options["mode"];
-    else if (arg === "--root") root = argv[(at += 1)] ?? "";
+  const rest = [...argv];
+  for (let arg = rest.shift(); arg !== undefined; arg = rest.shift()) {
+    if (arg === "--write" || arg === "--check") mode = arg === "--write" ? "write" : "check";
+    else if (arg === "--root") root = rest.shift() ?? "";
     else if (arg.startsWith("--root=")) root = arg.slice("--root=".length);
     else throw new Error(`unknown argument ${arg} (${USAGE})`);
   }
   if (mode === undefined) throw new Error(`say --write or --check (${USAGE})`);
   if (root === "") throw new Error(`--root needs a directory (${USAGE})`);
   return { mode, root };
+}
+
+/** Our own refusals already say `dependabot-config:`; a failure from the disk does not. */
+function failureMessage(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message.startsWith("dependabot-config:") ? message : `dependabot-config: ${message}`;
 }
 
 /** The command. Returns the exit code instead of exiting, so a test can run it. */
@@ -286,7 +323,7 @@ export function main(argv: string[], output: Output = console): number {
     (result.ok ? output.log : output.error)(result.message);
     return result.ok ? EXIT.ok : EXIT.drift;
   } catch (cause) {
-    output.error(cause instanceof Error && cause.message.startsWith("dependabot-config:") ? cause.message : `dependabot-config: ${cause instanceof Error ? cause.message : String(cause)}`);
+    output.error(failureMessage(cause));
     return EXIT.unreadable;
   }
 }
