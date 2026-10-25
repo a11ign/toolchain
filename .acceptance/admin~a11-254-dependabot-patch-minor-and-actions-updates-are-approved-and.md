@@ -26,8 +26,8 @@ grep -q '^  pull_requests: write$' .github/chainguard/dependabot-approve.sts.yam
 ! grep -q 'contents:' .github/chainguard/dependabot-approve.sts.yaml
 # no workflow but dependabot-auto.yml submits an approval
 ! grep -lE -- '--approve|\bAPPROVE\b' .github/workflows/*.yml | grep -v dependabot-auto.yml
-# nothing outside the plan's paths and the helper module the scripts needed
-git diff --name-only origin/main...HEAD | awk '$0 !~ /^(\.acceptance\/|\.changeset\/|README\.md$|\.github\/workflows\/dependabot-auto\.yml$|\.github\/chainguard\/dependabot-(approve|guard)\.sts\.yaml$|src\/dependabot-|scripts\/dependabot-config\.test\.ts$)/ { bad = 1; print } END { exit bad }'
+# nothing outside the plan's paths and the build config that keeps the test harness out of dist
+git diff --name-only origin/main...HEAD | awk '$0 !~ /^(\.acceptance\/|\.changeset\/|README\.md$|\.github\/workflows\/dependabot-auto\.yml$|\.github\/chainguard\/dependabot-(approve|guard)\.sts\.yaml$|src\/dependabot-|tsconfig\.build\.json$|scripts\/dependabot-config\.test\.ts$)/ { bad = 1; print } END { exit bad }'
 # the live proof is step 2's (a real Dependabot patch pull request merging with no person); this reads it once it exists
 # gh pr view <N> --repo a11ign/<repo> --json reviews,reviewDecision,autoMergeRequest,mergedBy,state
 ```
