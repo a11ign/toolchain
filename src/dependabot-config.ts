@@ -29,6 +29,10 @@
  * THE FILE CARRIES NO TOOLCHAIN VERSION. It would change with every release of this package, and a toolchain bump is an ordinary grouped update
  * that must pass the check: the file differs only when the TEMPLATE does.
  *
+ * THE SAME COMMAND WRITES AND CHECKS `.github/workflows/dependabot-auto.yml` (A11-254, `dependabot-auto.ts`): the workflow that approves a Dependabot patch,
+ * minor or Actions update and queues it. `--check` also reads the two Octo STS policies it mints under (`.github/chainguard/dependabot-approve.sts.yaml` and
+ * `dependabot-guard.sts.yaml`, hand-written because their subject needs the repository's id) and fails when any other workflow submits an approval.
+ *
  * ONE LINE FOR A CONSUMER: `pnpm exec dependabot-config --check` (exit 0 in step, 1 drift or a missing file, 2 unreadable). `--write` makes the file.
  * `--root <dir>` points either at another directory (default: the working directory).
  */
@@ -38,6 +42,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readLayoutTree, workspacePackageNames, type LayoutTree, type Output } from "./layout-check.ts";
 import { FROZEN, type FrozenPackage } from "./dependabot-frozen.ts";
+import { DEPENDABOT_AUTO_FILE, autoProblems, generateDependabotAuto, readAutoFiles } from "./dependabot-auto.ts";
 
 export type DependabotEcosystem = "npm" | "pip" | "github-actions";
 
@@ -235,13 +240,19 @@ const readTree = (root: string): LayoutTree => readLayoutTree(root, ["dependabot
 /** The file `--write` would make for the repository at `root`. */
 export const generateFor = (root: string): string => generateDependabotConfig(readTree(root));
 
-/** Writes `<root>/.github/dependabot.yml`; returns its path. */
-export function writeDependabotConfig({ root }: { root: string }): string {
-  const text = generateFor(root);
-  const path = join(root, DEPENDABOT_FILE);
+function writeGenerated(root: string, file: string, text: string): string {
+  const path = join(root, file);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);
   return path;
+}
+
+/** Writes `<root>/.github/dependabot.yml` and `<root>/.github/workflows/dependabot-auto.yml`; returns the first's path. */
+export function writeDependabotConfig({ root }: { root: string }): string {
+  // Generated before anything is written: the workflow is a file of the tree, and a tree that was empty is not one once it holds it.
+  const config = generateFor(root);
+  writeGenerated(root, DEPENDABOT_AUTO_FILE, generateDependabotAuto());
+  return writeGenerated(root, DEPENDABOT_FILE, config);
 }
 
 /** `common[i][j]`: how many lines the tails `a[i..]` and `b[j..]` have in common, in order. */
@@ -281,15 +292,32 @@ const writeCommand = (root: string): string => (root === process.cwd() ? "depend
 
 export type DependabotCheck = { ok: boolean; message: string };
 
-/** Whether the committed file is exactly the generated one. A missing file is drift. `message` is the diff and the command that fixes it. */
-export function checkDependabotConfig({ root }: { root: string }): DependabotCheck {
-  const generated = generateFor(root);
-  const path = join(root, DEPENDABOT_FILE);
+/** The drift of one generated file: `undefined` when the committed text is the generated one, else the diff and the command that fixes it. */
+function driftOf({ root, file, generated }: { root: string; file: string; generated: string }): string | undefined {
+  const path = join(root, file);
   const committed = existsSync(path) ? readFileSync(path, "utf8") : undefined;
-  if (committed === generated) return { ok: true, message: `dependabot-config: ok (${DEPENDABOT_FILE} is what --write produces)` };
-  const fix = `run \`${writeCommand(root)}\` (\`pnpm exec dependabot-config --write\` in the repository) and commit ${DEPENDABOT_FILE}`;
-  const shown = committed === undefined ? `${DEPENDABOT_FILE} does not exist; it should be:\n${generated}` : lineDiff(committed, generated).filter((line) => !line.startsWith("  ")).join("\n");
-  return { ok: false, message: `dependabot-config: FAIL ${DEPENDABOT_FILE} drifted from the template (- committed, + generated):\n${shown}\ndependabot-config: ${fix}` };
+  if (committed === generated) return undefined;
+  const fix = `run \`${writeCommand(root)}\` (\`pnpm exec dependabot-config --write\` in the repository) and commit ${file}`;
+  const shown = committed === undefined ? `${file} does not exist; it should be:\n${generated}` : lineDiff(committed, generated).filter((line) => !line.startsWith("  ")).join("\n");
+  return `dependabot-config: FAIL ${file} drifted from the template (- committed, + generated):\n${shown}\ndependabot-config: ${fix}`;
+}
+
+/** What is wrong with the approval's policies and the other workflows, one line each; they are hand-written, so there is no `--write` for them. */
+const approvalFailures = (root: string): string[] =>
+  autoProblems(readAutoFiles(root)).map(({ file, message }) => `dependabot-config: FAIL ${file}: ${message}`);
+
+/**
+ * Whether the committed files are exactly the generated ones (`dependabot.yml` and `dependabot-auto.yml`; a missing file is drift), and whether the
+ * approval's policies bind what they must. `message` is every diff, the command that fixes it, and every policy field that is wrong.
+ */
+export function checkDependabotConfig({ root }: { root: string }): DependabotCheck {
+  const drift = [
+    driftOf({ root, file: DEPENDABOT_FILE, generated: generateFor(root) }),
+    driftOf({ root, file: DEPENDABOT_AUTO_FILE, generated: generateDependabotAuto() }),
+  ].filter((message): message is string => message !== undefined);
+  const failures = [...drift, ...approvalFailures(root)];
+  if (failures.length === 0) return { ok: true, message: `dependabot-config: ok (${DEPENDABOT_FILE} and ${DEPENDABOT_AUTO_FILE} are what --write produces; the approval's policies bind dependabot[bot])` };
+  return { ok: false, message: failures.join("\n") };
 }
 
 const EXIT = { ok: 0, drift: 1, unreadable: 2 } as const;
@@ -322,7 +350,7 @@ export function main(argv: string[], output: Output = console): number {
   try {
     const { mode, root } = parseArgs(argv);
     if (mode === "write") {
-      output.log(`dependabot-config: wrote ${writeDependabotConfig({ root })}`);
+      output.log(`dependabot-config: wrote ${writeDependabotConfig({ root })} and ${join(root, DEPENDABOT_AUTO_FILE)}`);
       return EXIT.ok;
     }
     const result = checkDependabotConfig({ root });

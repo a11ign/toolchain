@@ -1,0 +1,8 @@
+# An APPROVE or a --approve in a comment submits nothing, and reading `reviewDecision` is a read, not a review.
+name: reads-the-decision
+on: [pull_request_target]
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "$(gh pr view 1 --json reviewDecision --jq .reviewDecision)" = APPROVED
