@@ -131,6 +131,31 @@ test("only a workflow YAML file means github-actions: a README under .github/wor
   assert.ok(updatesOf({ ...readmeOnly, ".github/workflows/ci.yaml": "" }).some((update) => update["package-ecosystem"] === "github-actions"), "negative control: a .yaml workflow counts");
 });
 
+test("a local composite action's directory is read too, in the one github-actions entry, and a repository with none keeps `/` alone", () => {
+  const withAction: LayoutTree = {
+    "package.json": manifest({ name: "x" }),
+    ".github/workflows/ci.yml": "",
+    ".github/actions/ansible-collections/action.yml": "",
+    ".github/actions/nested/deeper/action.yaml": "",
+    ".github/actions/ansible-collections/README.md": "",
+    ".github/actions/not-an-action/script.sh": "",
+  };
+  const actions = entryFor(withAction, "github-actions");
+  assert.deepEqual(actions.directories, ["/", "/.github/actions/ansible-collections", "/.github/actions/nested/deeper"]);
+  assert.equal(actions.directory, undefined);
+  assert.equal(updatesOf(withAction).filter((update) => update["package-ecosystem"] === "github-actions").length, 1, "one entry, so one group pull request covers them all");
+  for (const name of FIXTURE_NAMES) assert.equal(entryFor(fixture(name), "github-actions").directory, "/", `${name} holds no local action, so its entry is unchanged`);
+});
+
+test("a repository with a local action and no workflow updates that action's directory only", () => {
+  const actionOnly: LayoutTree = { "package.json": manifest({ name: "x" }), ".github/actions/setup/action.yml": "" };
+  assert.deepEqual(entryFor(actionOnly, "github-actions").directory, "/.github/actions/setup");
+});
+
+test("a local action directory YAML could misread is refused, not written", () => {
+  assert.throws(() => generateDependabotConfig({ "package.json": manifest({ name: "x" }), ".github/actions/a #1/action.yml": "" }), /local action in \/\.github\/actions\/a #1 has a name the generator will not write/);
+});
+
 test("a Python directory YAML could misread is refused, not written", () => {
   assert.throws(() => generateDependabotConfig({ "package.json": manifest({ name: "x" }), "docs #1/requirements.txt": "" }), /Python project in \/docs #1 has a name the generator will not write/);
   assert.throws(() => generateDependabotConfig({ "package.json": manifest({ name: "x" }), "a: b/pyproject.toml": "" }), /will not write/);

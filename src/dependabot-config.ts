@@ -18,7 +18,7 @@
  *     them; a custom label that does not exist in a repository is silently dropped.
  *
  * THE ECOSYSTEMS ARE READ FROM THE TREE: `npm` at `/` when a root `package.json` exists, `pip` for each directory holding a
- * `requirements*.txt` or a `pyproject.toml`, `github-actions` at `/` when `.github/workflows/` holds a file.
+ * `requirements*.txt` or a `pyproject.toml`, `github-actions` at `/` when `.github/workflows/` holds a file, plus the directory of each `.github/actions/<name>/action.yml` (a local composite action: Dependabot reads its `uses:` only when its directory is named).
  *
  * THE npm `ignore` LIST is three things, each written with the reason above it:
  *   1. `FROZEN` (`dependabot-frozen.ts`): the packages whose versions policy freezes. In every repository.
@@ -146,13 +146,25 @@ function pipDirectories(tree: LayoutTree): string[] {
   return directories;
 }
 
+/** A composite action kept in the repository: Dependabot reads its `uses:` only when its own directory is named. */
+const LOCAL_ACTION = /^\.github\/actions\/(.+)\/action\.ya?ml$/;
+
+/** `/` when workflows exist, then the directory of each local action, so the pins inside a composite action (`actions/cache`, say) are kept current too. */
+function githubActionsDirectories(tree: LayoutTree): string[] {
+  const paths = Object.keys(tree);
+  const actions = [...new Set(paths.flatMap((path) => LOCAL_ACTION.exec(path)?.[0] ?? []).map(directoryOf))].sort();
+  const odd = actions.find((directory) => !isPlainDirectory(directory));
+  if (odd !== undefined) throw new Error(`dependabot-config: the local action in ${odd} has a name the generator will not write into YAML; rename the directory`);
+  return [...(paths.some((path) => WORKFLOW_FILE.test(path)) ? ["/"] : []), ...actions];
+}
+
 /** The directories an ecosystem is updated in: what the repository says, else what the tree holds; empty when it holds none. */
 function directoriesFor(ecosystem: DependabotEcosystem, tree: LayoutTree, extras: DependabotExtras): string[] {
   const said = extras[ecosystem]?.directories;
   if (said !== undefined) return said;
   if (ecosystem === "npm") return "package.json" in tree ? ["/"] : [];
   if (ecosystem === "pip") return pipDirectories(tree);
-  return Object.keys(tree).some((path) => WORKFLOW_FILE.test(path)) ? ["/"] : [];
+  return githubActionsDirectories(tree);
 }
 
 /** The first of each name, in order: the first reason a name was given is the one shown. */
