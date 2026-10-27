@@ -1,5 +1,0 @@
----
-"@a11ign/toolchain": minor
----
-
-`dependabot-config --write` also writes `.github/workflows/dependabot-auto.yml` (A11-254), and `--check` fails when it has drifted. The workflow approves a Dependabot patch, minor or non-major GitHub Actions update as the Octo STS App when every commit on the pull request is Dependabot's, and hands it to `auto-arm.yml`'s `arm-approved`, so it merges when `gate` is green with no person. A major is never approved. It dismisses its own approvals when someone else pushes to the branch, reruns an infrastructure failure of `ci` once, and comments any other red `gate` with the failing jobs' error lines. `--check` also reads the repository's two hand-written Octo STS policies (`.github/chainguard/dependabot-approve.sts.yaml`, pinned to dependabot[bot]'s id and `main`'s copy of the workflow, and `dependabot-guard.sts.yaml`), fails when `auto-arm.yml` has no `arm-approved` job, and fails when any other workflow submits an approving review. A repository adopting this release needs the two policies before its `--check` passes.
