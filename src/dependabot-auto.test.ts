@@ -387,7 +387,7 @@ test("the log patterns are agent-org's: an error is kept, a warning, a command e
 
 // ---- the workflow's own shape ---------------------------------------------------------------------------------------------------------
 
-type Workflow = { on: Record<string, unknown>; permissions: unknown; jobs: Record<string, { permissions: Record<string, string>; steps: { uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, string> }[] }> };
+type Workflow = { on: Record<string, unknown>; permissions: unknown; concurrency: { group: string; "cancel-in-progress": string }; jobs: Record<string, { permissions: Record<string, string>; steps: { uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, string> }[] }> };
 const workflow = parse(generateDependabotAuto()) as Workflow;
 const allSteps = Object.entries(workflow.jobs).flatMap(([job, { steps }]) => steps.map((step) => ({ job, ...step })));
 
@@ -395,6 +395,26 @@ test("the workflow runs `main`'s copy on pull_request_target and workflow_run, n
   assert.deepEqual(Object.keys(workflow.on).sort(), ["pull_request_target", "workflow_run"]);
   assert.deepEqual(workflow.permissions, {});
   assert.deepEqual(Object.keys(workflow.jobs), ["approve", "withdraw", "red"]);
+});
+
+/** A `${{ … }}` expression of the workflow evaluated over a `github` context; the two the concurrency block uses are plain JavaScript. */
+function evaluate(template: string, github: unknown): unknown {
+  const expression = /^\$\{\{ (.*) \}\}$/.exec(template)?.[1] ?? assert.fail(`not an expression: ${template}`);
+  return new Function("github", `return ${expression.replace(/\./g, "?.")};`)(github);
+}
+const groupOf = (github: unknown): string => workflow.concurrency.group.replace(/\$\{\{ (.*?) \}\}/g, (_, expression: string) => String(evaluate(`\${{ ${expression} }}`, github)));
+const prEvent = (number: number) => ({ event_name: "pull_request_target", event: { pull_request: { number } } });
+const ciCompleted = (id: number) => ({ event_name: "workflow_run", event: { workflow_run: { id } } });
+
+test("pull-request events of one pull request share a group that a newer event cancels; another pull request and every ci completion do not", () => {
+  const cancels = (github: unknown): unknown => evaluate(workflow.concurrency["cancel-in-progress"], github);
+  assert.equal(groupOf(prEvent(5)), groupOf(prEvent(5)));
+  assert.notEqual(groupOf(prEvent(5)), groupOf(prEvent(6)), "another pull request is its own group");
+  assert.equal(cancels(prEvent(5)), true, "a newer pull-request event cancels the older run");
+  assert.equal(cancels(ciCompleted(900)), false, "a ci completion never cancels, and nothing cancels it: its group is its run id");
+  assert.notEqual(groupOf(ciCompleted(900)), groupOf(ciCompleted(901)));
+  assert.notEqual(groupOf(ciCompleted(5)), groupOf(prEvent(5)), "a ci run whose id equals a pull request number is not that pull request's group");
+  assert.equal(groupOf(prEvent(5)), "dependabot-auto-pull_request_target-5");
 });
 
 test("no job checks anything out, so no byte of a pull request is on the runner with a write token in hand", () => {
