@@ -2,12 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { assertWorkflowsHeld, buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, unreleasedChangesets, workflowsTree } from "./release-per-merge.ts";
+import { afterVersionCommand, assertWorkflowsHeld, buildRelease, changelogEntry, loneDirOf, namesARelease, parseReleaseTag, releaseAssets, unreleasedChangesets, workflowsTree } from "./release-per-merge.ts";
 
 // WHAT THIS PINS, AND HOW IT READS THE WORKFLOW. `release-per-merge.yml` is read as YAML and judged on STRUCTURE (keys, permissions, `needs`,
 // `if`), never on words: the file's comments explain WHY in the very words a text match would find. The version logic is not read at all:
@@ -195,10 +195,10 @@ const versionOf = (root: string, rev: string, dir: string): string => JSON.parse
 const reReleases = (result: { released: boolean; packages?: { tag: string }[] }): string[] =>
   result.released ? [`re-releases ${result.packages?.map(({ tag }) => tag).join(", ")} for a merge carrying no new changeset`] : [];
 
-function inScratch(body: (root: string) => void): void {
+function inScratch<T>(body: (root: string) => T): T {
   const root = workspace();
   try {
-    body(root);
+    return body(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -494,6 +494,116 @@ test("tag names, empty changesets and changelog entries read as changesets write
   assert.equal(namesARelease("---\n---\n"), false);
   assert.equal(changelogEntry("# a\n\n## 1.1.0\n\n- new\n\n## 1.0.0\n\n- old\n", "1.1.0"), "- new\n");
   assert.throws(() => changelogEntry("# a\n\n## 1.0.0\n\n- old\n", "1.1.0"), /no entry for 1\.1\.0/);
+});
+
+// ---- a caller's files in the release: `after-version` and `release-files` -----------------------------------------------------------
+
+/** `buildRelease` over the scratch workspace on a detached HEAD, with the caller's `afterVersion`; `main` is put back after. */
+function cutWith(root: string, afterVersion?: (cwd: string) => void, kind: "npm" | "tag" = "npm") {
+  git(root, "checkout", "-q", "--detach");
+  try {
+    return buildRelease({ cwd: root, changesetVersion, afterVersion, kind });
+  } finally {
+    git(root, "checkout", "-q", "-f", "main");
+  }
+}
+
+test("what after-version writes is in the release commit, after changeset version has moved the version and the changesets are gone", () => {
+  inScratch((root) => {
+    changeset(root, "one", { a: "minor" });
+    const seen: Record<string, string> = {};
+    const result = cutWith(root, (cwd) => {
+      seen.version = JSON.parse(readFileSync(join(cwd, "packages/a/package.json"), "utf8")).version;
+      seen.changeset = String(existsSync(join(cwd, ".changeset/one.md")));
+      write(cwd, "packages/a/pins.json", `{ "version": "${seen.version}" }\n`);
+    });
+    assert.ok(result.released, "positive control: a release was made, so the reads below are of a release commit");
+    assert.deepEqual(seen, { version: "1.1.0", changeset: "false" }, "it runs after changeset version, on the version being released");
+    assert.equal(git(root, "show", `${result.sha}:packages/a/pins.json`), '{ "version": "1.1.0" }\n');
+    assert.equal(git(root, "status", "--porcelain").trim(), "", "it is committed, not left in the working tree");
+  });
+});
+
+test("an after-version that fails leaves no release commit and no tag, and the error reaches the job", () => {
+  inScratch((root) => {
+    changeset(root, "one", { a: "minor" });
+    const head = git(root, "rev-parse", "HEAD").trim();
+    const before = tags(root);
+    assert.throws(() => cutWith(root, () => { throw new Error("pins do not match the sums"); }), /pins do not match the sums/);
+    assert.equal(git(root, "rev-parse", "HEAD").trim(), head, "no release commit was made");
+    assert.deepEqual(tags(root), before);
+  });
+});
+
+test("after-version is never run when no changeset is unreleased, nor when the only package moved is private under kind npm", () => {
+  inScratch((root) => {
+    const ran: string[] = [];
+    const spy = () => void ran.push("ran");
+    assert.equal(cutWith(root, spy).released, false);
+    changeset(root, "private", { p: "minor" });
+    const result = cutWith(root, spy);
+    assert.equal(result.released, false, "positive control: a private package moved and nothing was released");
+    assert.deepEqual(ran, []);
+  });
+});
+
+test("a release with no after-version is the release it was: the same tree as one whose after-version writes nothing", () => {
+  // The changelog names the commit that added each changeset, so the two runs' commits are given one date, or a tick of the clock between them is a different tree.
+  const treeOf = (afterVersion?: (cwd: string) => void): string => {
+    const fixed = { GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z" };
+    Object.assign(process.env, fixed);
+    try {
+      return inScratch((root) => {
+        changeset(root, "one", { a: "minor" });
+        const result = cutWith(root, afterVersion);
+        assert.ok(result.released, "positive control");
+        return git(root, "rev-parse", `${result.sha}^{tree}`).trim();
+      });
+    } finally {
+      for (const key of Object.keys(fixed)) delete process.env[key];
+    }
+  };
+  assert.equal(treeOf(), treeOf(() => undefined));
+});
+
+test("afterVersionCommand runs the command through sh in the repository root with RELEASE_FILES, and a non-zero exit throws", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-per-merge-"));
+  try {
+    afterVersionCommand('printf "%s" "$RELEASE_FILES" > seen.txt && pwd > where.txt', "/the/downloaded/files")(root);
+    assert.equal(readFileSync(join(root, "seen.txt"), "utf8"), "/the/downloaded/files");
+    assert.equal(readFileSync(join(root, "where.txt"), "utf8").trim(), realpathSync(root));
+    assert.throws(() => afterVersionCommand("exit 3", "")(root), /Command failed/);
+    afterVersionCommand('test "${RELEASE_FILES-unset}" = unset', "")(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("afterVersionCommand fails on any line or pipe stage that fails, as every step of the workflow does, and not only on the last command", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-per-merge-"));
+  try {
+    afterVersionCommand("true\ntrue", "")(root);
+    assert.throws(() => afterVersionCommand("false\ntrue", "")(root), /Command failed/, "a failing first line");
+    assert.throws(() => afterVersionCommand("false | true", "")(root), /Command failed/, "a failing pipe stage");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("releaseAssets lists the files directly in assets/, sorted, and refuses an artifact that would give the Release nothing", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-per-merge-"));
+  try {
+    assert.throws(() => releaseAssets(root), /has no assets\/ directory/);
+    mkdirSync(join(root, "assets"));
+    assert.throws(() => releaseAssets(root), /holds no file/);
+    mkdirSync(join(root, "assets", "a-directory"));
+    assert.throws(() => releaseAssets(root), /holds no file/, "a directory is not an asset");
+    for (const file of ["SHA256SUMS", "bundle-b.tar.xz", "bundle-a.tar.xz"]) write(root, `assets/${file}`, file);
+    write(root, "pins/pin-a.json", "{}");
+    assert.deepEqual(releaseAssets(root), ["SHA256SUMS", "bundle-a.tar.xz", "bundle-b.tar.xz"].map((file) => join(root, "assets", file)), "pins/ and report/ are not attached");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ---- the tip's workflows, so GitHub reads no workflow change in the pushed commit (a11ign/a11ign#4010) -----------------------------------

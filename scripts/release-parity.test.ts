@@ -77,13 +77,16 @@ function evaluate(text: string, context: Context): string {
   });
 }
 
-/** An `if:` of the form `steps.x.outputs.y != 'v'` or `== 'v'`: the only ones the steps run here carry. */
+/** An `if:` of one or more `steps.x.outputs.y != 'v'` or `inputs.x == 'v'` comparisons joined by `&&`: the only ones the steps run here carry. */
 function holds(condition: string | undefined, context: Context): boolean {
   if (condition === undefined) return true;
-  const form = /^steps\.([\w-]+)\.outputs\.([\w-]+) (==|!=) '(.*)'$/.exec(condition);
-  if (!form) throw new Error(`the condition ${condition} is not one this harness evaluates`);
-  const [, id, output, operator, value] = form;
-  return ((context.steps[id]?.[output] ?? "") === value) === (operator === "==");
+  return condition.split(" && ").every((comparison) => {
+    const form = /^(?:steps\.([\w-]+)\.outputs\.([\w-]+)|inputs\.([\w-]+)) (==|!=) '(.*)'$/.exec(comparison);
+    if (!form) throw new Error(`the condition ${condition} is not one this harness evaluates`);
+    const [, id, output, input, operator, value] = form;
+    const actual = (input === undefined ? context.steps[id]?.[output] : context.inputs[input]) ?? "";
+    return (actual === value) === (operator === "==");
+  });
 }
 
 /** The shell GitHub starts: `bash -e {0}` for a step that names none, and `bash -eo pipefail {0}` for `shell: bash`. */
@@ -146,12 +149,19 @@ function pnpmStandIn(dir: string): { bin: string; log: string } {
   return { bin, log };
 }
 
+/** The download step is an action and is not started: where the caller names an artifact, what it would have unpacked is put where it unpacks. */
+function unpackArtifact(runnerTemp: string, artifact: string, assetFiles: string[] = ["bundle.tar.xz"]): void {
+  if (!artifact) return;
+  mkdirSync(join(runnerTemp, "release-files", "assets"), { recursive: true });
+  for (const file of assetFiles) write(join(runnerTemp, "release-files", "assets", file), file);
+}
+
 type VersionJob = { failed?: { step: string; stderr: string } /* stdout too: pnpm writes its errors there */; outputs: Record<string, string>; actions: Record<string, Record<string, string>>; pnpmCalls: string[]; installedModules: boolean; tags: string[] };
 
 const notTheTipFetch = (step: Step): boolean => !step.name?.startsWith("The tip of the default branch");
 
 /** Every `run` step of the `version` job up to and including the release step, in order, stopping at the first that fails as the runner does; the actions' `with:` are evaluated, not started. */
-function runVersionJob(shape: Shape, inputs: Record<string, string>): VersionJob {
+function runVersionJob(shape: Shape, inputs: Record<string, string>, assetFiles?: string[]): VersionJob {
   return scratch("parity-version-", (dir) => {
     const root = join(dir, "repo");
     mkdirSync(root);
@@ -162,6 +172,7 @@ function runVersionJob(shape: Shape, inputs: Record<string, string>): VersionJob
     const context: Context = { inputs: { ...defaults, kind: "tag", ...inputs }, steps: {}, needs: {} };
     const env = { PATH: `${bin}:${process.env.PATH}`, GITHUB_SHA: git(root, "rev-parse", "HEAD").trim(), RUNNER_TEMP: join(dir, "tmp") };
     mkdirSync(env.RUNNER_TEMP);
+    unpackArtifact(env.RUNNER_TEMP, context.inputs["release-files"], assetFiles);
     // There is no network and no origin here, so the step that fetches the tip is not run; the tip is the merge itself, whose workflows the release commit already has (release-per-merge.test.ts runs the graft).
     git(root, "update-ref", "refs/remotes/tip/main", "HEAD");
     const job: VersionJob = { outputs: {}, actions: {}, pnpmCalls: [], installedModules: false, tags: [] };
@@ -503,4 +514,23 @@ test("parity G5: the tag check is seen to FAIL on a push that is not atomic, one
   assert.match(tagProblems(mutated(script, "--atomic", "--atomic --force")).join("\n"), /it was MOVED/);
   const swallowed = mutated(mutated(script, /(git push --atomic .*)/, "$1 || true"), 'if [ "$cut" != "$SHA" ]; then', "if false; then");
   assert.match(tagProblems(swallowed).join("\n"), /an unreadable remote: the step succeeded/);
+});
+
+// ---- a caller's after-version command, in the version job as the runner runs it ---------------------------------------------------------
+
+test("after-version runs in the version job with RELEASE_FILES where an artifact is named, with none where it is not, and a failing one stops the job before any release", () => {
+  const sees = (check: string, inputs: Record<string, string>) => runVersionJob({}, { "pnpm-version": "10.34.5", "after-version": check, ...inputs });
+  const named = sees('test "$RELEASE_FILES" = "$RUNNER_TEMP/release-files"', { "release-files": "bundles" });
+  assert.equal(named.failed, undefined, why(named));
+  assert.equal(named.outputs.released, "true", "the command saw the downloaded artifact's directory, and the release was made");
+  const unnamed = sees('test -z "${RELEASE_FILES-}"', {});
+  assert.equal(unnamed.failed, undefined, why(unnamed));
+  assert.equal(unnamed.outputs.released, "true", "no artifact named, no RELEASE_FILES");
+  const empty = runVersionJob({}, { "pnpm-version": "10.34.5", "release-files": "bundles" }, []);
+  assert.match(empty.failed?.step ?? "", /^The release-files artifact has files/, "an artifact with nothing to attach stops the job before the release commit");
+  assert.equal(empty.outputs.released, undefined);
+  const failing = sees("echo the pins do not match >&2; exit 7", { "release-files": "bundles" });
+  assert.match(failing.failed?.step ?? "", /^The release commit/, "positive control: the command really ran");
+  assert.equal(failing.outputs.released, undefined, "a non-zero exit makes no release");
+  assert.deepEqual(failing.tags, []);
 });

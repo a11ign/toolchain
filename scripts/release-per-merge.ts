@@ -29,6 +29,11 @@
 // refused identically. A release commit sits on the merge it releases, so any workflow file merged since made every tag push fail. The
 // commit therefore takes its `.github/workflows` from the tip (`graftTipWorkflows`, `TIP`), and the `tag` job checks, before pushing, that
 // the tip has not moved them again (`assertWorkflowsHeld`). The parent is still the merge released; only this one directory differs.
+//
+// A CALLER MAY CARRY FILES INTO THE RELEASE (a11ign/announcement-emulator: runtime bundles whose sums its package pins). `release-files` names an artifact the
+// caller uploaded earlier in the run, and `after-version` a command the `version` job runs, in the repository root with RELEASE_FILES set to the downloaded
+// artifact, after `changeset version` and before the release commit (`buildRelease`'s `afterVersion`): whatever it writes is in the commit that is tagged and
+// published. The `tag` job attaches the artifact's `assets/` to the lone package's Release (`releaseAssets`). A caller that sets neither is unchanged.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -302,13 +307,15 @@ export function assertWorkflowsHeld({ cwd, commit, tip }: { cwd: string; commit:
 }
 
 /**
- * @param {{ cwd: string, changesetVersion: (cwd: string) => void, kind: "npm" | "tag", released?: (cwd: string) => Set<string>, lonePackageDir?: string, tip?: string }} options
+ * @param {{ cwd: string, changesetVersion: (cwd: string) => void, afterVersion?: (cwd: string) => void, kind: "npm" | "tag", released?: (cwd: string) => Set<string>, lonePackageDir?: string, tip?: string }} options
  *   `changesetVersion` runs `changeset version` (and refreshes the lockfile) in `cwd`. `kind` is the caller's, and decides whether a private lone package is released.
+ *   `afterVersion` is the caller's `after-version` command. It runs once, in `cwd`, only when a releasable package moved, after `changeset version` and before the release commit,
+ *   so what it writes is in that commit. If it throws, no commit is made: the `version` job fails before any tag or publish.
  *   `lonePackageDir` is the caller's `lone-package-dir`: the package there is tagged `vx.y.z` as a root package is.
  *   `tip`, where given, is the revision whose `.github/workflows` the release commit takes (see the head of this file); the workflow reads it as late as it can.
  * @returns {{ released: false, reason: string } | { released: true, sha: string, packages: ReleasedPackage[] }}
  */
-export function buildRelease({ cwd, changesetVersion, kind, released, lonePackageDir, tip }: { cwd: string; changesetVersion: (cwd: string) => void; kind: "npm" | "tag"; released?: (cwd: string) => Set<string>; lonePackageDir?: string; tip?: string; }): { released: false; reason: string; } | { released: true; sha: string; packages: ReleasedPackage[]; } {
+export function buildRelease({ cwd, changesetVersion, afterVersion, kind, released, lonePackageDir, tip }: { cwd: string; changesetVersion: (cwd: string) => void; afterVersion?: (cwd: string) => void; kind: "npm" | "tag"; released?: (cwd: string) => Set<string>; lonePackageDir?: string; tip?: string; }): { released: false; reason: string; } | { released: true; sha: string; packages: ReleasedPackage[]; } {
   const loneDir = loneDirOf(lonePackageDir);
   refuseUnknownLoneDir(cwd, loneDir);
   if (existsSync(join(cwd, ".changeset", "pre.json"))) throw new Error("pre-release mode (.changeset/pre.json) is not supported: every tag here is a plain x.y.z");
@@ -321,6 +328,7 @@ export function buildRelease({ cwd, changesetVersion, kind, released, lonePackag
   removeFiles(cwd, presentChangesets(cwd));
   const packages = packagesThatMoved({ cwd, before, kind, loneDir });
   if (packages.length === 0) return { released: false, reason: "the changesets move no releasable package's version" };
+  afterVersion?.(cwd);
   for (const released of packages) refuseUnreleasable(cwd, released);
   git(cwd, ["add", "-A"]);
   git(cwd, [...COMMITTER, "commit", "-q", "-m", `Release ${packages.map(({ tag }) => tag).join(", ")}`]);
@@ -358,6 +366,35 @@ function changesetVersionInCi(cwd: string) {
 }
 
 /**
+ * The caller's `after-version` command, run by `bash -eo pipefail -c` (the shell every step of the workflow runs in, so a failing line or pipe stage is a failure and not a status the
+ * last line hides) in the repository root, with RELEASE_FILES set to the downloaded `release-files` artifact where the caller named one and unset where it did not. Its output goes
+ * to the job's log, and a non-zero exit throws, so the release commit is never made.
+ * @param {string} command @param {string} releaseFiles @returns {(cwd: string) => void}
+ */
+export function afterVersionCommand(command: string, releaseFiles: string): (cwd: string) => void {
+  const env = { ...process.env };
+  delete env.RELEASE_FILES;
+  if (releaseFiles) env.RELEASE_FILES = releaseFiles;
+  return (cwd) => void execFileSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", command], { cwd, stdio: "inherit", env });
+}
+
+/**
+ * What the lone package's Release is created with: every file directly in the `release-files` artifact's `assets/`, sorted. An artifact with none is refused, because a Release
+ * that was meant to carry bundles and carries nothing is cut once and its tag cannot be moved.
+ * @param {string} releaseFiles @returns {string[]}
+ */
+export function releaseAssets(releaseFiles: string): string[] {
+  const dir = join(releaseFiles, "assets");
+  if (!existsSync(dir)) throw new Error(`${releaseFiles} has no assets/ directory, so the Release would carry nothing`);
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(dir, entry.name))
+    .sort();
+  if (files.length === 0) throw new Error(`${dir} holds no file, so the Release would carry nothing`);
+  return files;
+}
+
+/**
  * What `pnpm/action-setup` and `actions/setup-node` need to be given. The action refuses a `version` beside a `packageManager` that differs, so it is
  * given the input only where there is no `packageManager`; `cache: pnpm` fails on a missing lockfile, so it is given only where there is one.
  * @param {{ cwd: string, pnpmVersion: string }} options @returns {{ "pnpm-version": string, cache: string }}
@@ -389,15 +426,17 @@ function main() {
   }
   if (command === "setup") return setOutputs(pnpmSetup({ cwd, pnpmVersion: process.env.PNPM_VERSION ?? "" }));
   if (command === "version") {
-    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi, kind: kindOf(process.env.KIND), lonePackageDir: process.env.LONE_PACKAGE_DIR, tip: process.env.TIP || undefined });
+    const afterVersion = process.env.AFTER_VERSION ? afterVersionCommand(process.env.AFTER_VERSION, process.env.RELEASE_FILES ?? "") : undefined;
+    const result = buildRelease({ cwd, changesetVersion: changesetVersionInCi, afterVersion, kind: kindOf(process.env.KIND), lonePackageDir: process.env.LONE_PACKAGE_DIR, tip: process.env.TIP || undefined });
     if (!result.released) return setOutputs({ released: "false", reason: result.reason });
     const manifest = join(process.env.RUNNER_TEMP ?? tmpdir(), "release.json");
     writeFileSync(manifest, `${JSON.stringify(result, null, 2)}\n`);
     return setOutputs({ released: "true", sha: result.sha, manifest });
   }
   if (command === "check-workflows") return assertWorkflowsHeld({ cwd, commit: "HEAD", tip: process.env.TIP ?? "" });
+  if (command === "assets") return void console.log(releaseAssets(rest[0]).join("\n"));
   if (command === "notes") return process.stdout.write(changelogEntry(readFileSync(join(cwd, rest[0], "CHANGELOG.md"), "utf8"), rest[1]));
-  throw new Error(`unknown command '${command}': plan, setup, version, check-workflows or notes`);
+  throw new Error(`unknown command '${command}': plan, setup, version, check-workflows, assets or notes`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
