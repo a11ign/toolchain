@@ -37,6 +37,13 @@
 # @changesets/cli@<changesets-version>`; pnpm itself comes from `packageManager`, else from the `pnpm-version` input, and a repository with neither
 # is refused by name.
 #
+# A CALLER MAY CARRY FILES INTO THE RELEASE, and a repository whose package pins the sums of files attached to the same version needs to. `release-files` is the name of an
+# artifact the caller uploaded EARLIER IN THE SAME RUN (a job of its own that `needs` finishing before this one): it is downloaded to `$RUNNER_TEMP/release-files` in `version`
+# and in `tag`, and its `assets/` are attached to the lone package's Release when it is created, so a Release never exists without them. `after-version` is a shell command run
+# in `version` (under `bash -eo pipefail`), in the repository root, with RELEASE_FILES set to that directory, after `changeset version` and before the release commit, only when a releasable package moved:
+# what it writes is in the commit that is tagged and published. It is the caller's code in the job that already runs the caller's code (`pnpm install`), with `contents: read`
+# and no credential, and a non-zero exit fails the job before any commit, so nothing is tagged or published. Both default to empty, and with both empty nothing changes.
+#
 # THE OIDC TOKEN NAMES THE CALLING WORKFLOW'S FILE, according to npm's trusted-publisher documentation ("validation checks the calling
 # workflow's name instead of the workflow that actually contains the publish command"). NOT VERIFIED BY A PUBLISH: the `toolchain` migration row
 # measures it. So each caller keeps the file name its trusted-publisher entry holds, and this file's own name is never what npm is told.
@@ -83,6 +90,16 @@ on:
         required: false
         type: string
         default: latest
+      release-files:
+        description: "The name of an artifact uploaded earlier in the same run. It is downloaded for `after-version` (as RELEASE_FILES) and its `assets/` files are attached to the lone package's Release. Empty, nothing is downloaded or attached."
+        required: false
+        type: string
+        default: ""
+      after-version:
+        description: "A shell command run in the `version` job, in the repository root, after `changeset version` and only when a releasable package moved, before the release commit; what it writes is released. RELEASE_FILES is the downloaded `release-files` directory. A non-zero exit fails the job before any commit. Empty, none is run."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -196,6 +213,15 @@ jobs:
       - name: Install, which runs the caller's code and so holds no token
         if: steps.plan.outputs.count != '0'
         run: if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; fi
+      - uses: actions/download-artifact@v8
+        if: steps.plan.outputs.count != '0' && inputs.release-files != ''
+        with:
+          name: ${{ inputs.release-files }}
+          path: ${{ runner.temp }}/release-files
+      # The Release is created after the tags are pushed and the package is published, and a tag is never moved: an artifact with nothing to attach is found here, before any commit.
+      - name: The release-files artifact has files for the Release, or no release commit is made
+        if: steps.plan.outputs.count != '0' && inputs.release-files != ''
+        run: node .release-tool/scripts/release-per-merge.ts assets "$RUNNER_TEMP/release-files" > /dev/null
       # THE TIP, READ AS LATE AS THE VERSION JOB CAN (a11ign/a11ign#4010). `actions/checkout` set `origin/main` to the pushed sha, which is the
       # merge being released and not the tip. GitHub compares a pushed commit's `.github/workflows` against the tip, so the release commit takes
       # the tip's. The token is in the URL, where the runner masks it, for this one fetch, after the caller's code has run.
@@ -211,11 +237,15 @@ jobs:
           KIND: ${{ inputs.kind }}
           CHANGESETS_VERSION: ${{ inputs.changesets-version }}
           LONE_PACKAGE_DIR: ${{ inputs.lone-package-dir }}
+          AFTER_VERSION: ${{ inputs.after-version }}
+          RELEASE_FILES_ARTIFACT: ${{ inputs.release-files }}
           TIP: refs/remotes/tip/main
         # `bash` is `bash -eo pipefail`; the default `bash -e` has no pipefail, so `script | tee` took `tee`'s status and a script that died read as success (#3766).
         shell: bash
         run: |
           git switch --detach
+          # Where the caller's artifact was downloaded, for its `after-version` command; unset where the caller named no artifact.
+          if [ -n "$RELEASE_FILES_ARTIFACT" ]; then export RELEASE_FILES="$RUNNER_TEMP/release-files"; fi
           node .release-tool/scripts/release-per-merge.ts version | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Carry the release commit to the jobs after this one, as a bundle
         if: steps.release.outputs.released == 'true'
@@ -314,6 +344,11 @@ jobs:
         with:
           name: release-commit
           path: ${{ runner.temp }}/carry
+      - uses: actions/download-artifact@v8
+        if: inputs.release-files != ''
+        with:
+          name: ${{ inputs.release-files }}
+          path: ${{ runner.temp }}/release-files
       - name: Check out the release commit
         env:
           SHA: ${{ needs.version.outputs.sha }}
@@ -353,6 +388,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DIST_TAG: ${{ inputs.dist-tag }}
+          RELEASE_FILES_ARTIFACT: ${{ inputs.release-files }}
         # Under pipefail so a `jq` that fails ends the step red instead of feeding the loop nothing and cutting no Release.
         shell: bash
         run: |
@@ -362,6 +398,12 @@ jobs:
             # a Release for any other is a channel's, and must not displace the Release people are sent to.
             latest=--latest=false
             { [ "$dir" = . ] || [ "$lone" = true ]; } && [ "$DIST_TAG" = latest ] && latest=--latest
-            gh release create "$tag" --verify-tag --title "$tag" --notes-file "$RUNNER_TEMP/notes.md" "$latest"
+            # The lone package's Release is created WITH the caller's files, in the one call, so it never exists without them. Another package's gets none.
+            assets=()
+            if [ -n "$RELEASE_FILES_ARTIFACT" ] && [ "$lone" = true ]; then
+              node .release-tool/scripts/release-per-merge.ts assets "$RUNNER_TEMP/release-files" > "$RUNNER_TEMP/assets.txt"
+              mapfile -t assets < "$RUNNER_TEMP/assets.txt"
+            fi
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file "$RUNNER_TEMP/notes.md" "$latest" "${assets[@]}"
             echo "cut $tag at $(git rev-parse HEAD), on top of $GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
           done

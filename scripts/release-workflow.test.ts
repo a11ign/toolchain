@@ -1,16 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { declareModule, TYPE_STRIPPING_ENV } from "./node-with-types.ts";
 
 // THE RELEASE WORKFLOW IS READ AS YAML, never as words (a11ign/a11ign#3713): a comment that explains why there is no `workflow_dispatch`
 // would match a search for it, and a key moved under a different parent would pass one. `refusals` returns the name of every property the
 // file breaks, so one assertion reads a whole file and a mutation names the property it broke.
 
-type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
+type Step = { uses?: string; run?: string; if?: string; with?: Record<string, unknown> };
 type Job = {
   uses?: string;
   with?: Record<string, unknown>;
@@ -225,4 +226,96 @@ test("the Release of a lone package below the root is --latest on latest only, a
   assert.match(releaseFlag("latest", "packages/lab", true), / --latest$/);
   assert.match(releaseFlag("next", "packages/lab", true), / --latest=false$/);
   assert.match(releaseFlag("latest", "packages/a", false), / --latest=false$/);
+});
+
+// A CALLER'S FILES IN THE RELEASE (a11ign/announcement-emulator, A11-232): `release-files` names an artifact from earlier in the run and `after-version` a command for the
+// `version` job. Both are optional and empty by default, so a caller that sets neither is unchanged: nothing is downloaded, no command is run, no asset is attached.
+for (const name of ["release-files", "after-version"]) {
+  test(`${name} is an optional string input that defaults to empty, so a caller that names none is unchanged`, () => {
+    const input = calledWorkflow.on?.workflow_call?.inputs?.[name];
+    assert.ok(input, `the called workflow takes a ${name} input`);
+    assert.equal(input.type, "string");
+    assert.equal(input.required, false);
+    assert.equal(input.default, "");
+  });
+}
+
+const downloads = (job: string) => (called.jobs?.[job]?.steps ?? []).filter((s) => (s.uses ?? "").startsWith("actions/download-artifact") && s.with?.name === "${{ inputs.release-files }}");
+
+test("the version and tag jobs download the release-files artifact, and only when one is named", () => {
+  for (const job of ["version", "tag"]) {
+    const found = downloads(job);
+    assert.equal(found.length, 1, `${job} downloads the named artifact once`);
+    assert.equal(found[0].if, job === "tag" ? "inputs.release-files != ''" : "steps.plan.outputs.count != '0' && inputs.release-files != ''", `${job}: no input, no download`);
+    assert.equal(found[0].with?.path, "${{ runner.temp }}/release-files");
+  }
+  const check = step("version", /^The release-files artifact has files/);
+  assert.ok(check, "positive control: the version job checks the artifact has files, before any commit");
+  assert.equal(check.if, "steps.plan.outputs.count != '0' && inputs.release-files != ''");
+  assert.match(check.run ?? "", /release-per-merge\.ts assets "\$RUNNER_TEMP\/release-files"/);
+  const names = (calledWorkflow.jobs?.version?.steps ?? []).map((s) => s.name ?? s.uses ?? "");
+  assert.ok(names.indexOf(check.name ?? "") > names.findIndex((n) => n.startsWith("actions/download-artifact")) && names.indexOf(check.name ?? "") < names.findIndex((n) => /^The release commit/.test(n)), "after the download and before the release commit");
+  assert.deepEqual(["gate", "publish"].map((job) => downloads(job).length), [0, 0], "the publishing job, which holds the OIDC token, downloads nothing of the caller's");
+});
+
+test("after-version reaches the version step as AFTER_VERSION beside RELEASE_FILES, and no other job reads the input", () => {
+  const release = step("version", /^The release commit/);
+  assert.ok(release, "positive control: the version job has its release-commit step");
+  assert.equal(release.env?.AFTER_VERSION, "${{ inputs.after-version }}");
+  assert.equal(release.env?.RELEASE_FILES_ARTIFACT, "${{ inputs.release-files }}");
+  assert.match(release.run ?? "", /\[ -n "\$RELEASE_FILES_ARTIFACT" \]; then export RELEASE_FILES="\$RUNNER_TEMP\/release-files"/, "the directory is exported only where an artifact was named");
+  const readers = Object.entries(called.jobs ?? {}).filter(([, job]) => JSON.stringify(job).includes("inputs.after-version")).map(([name]) => name);
+  assert.deepEqual(readers, ["version"], "the caller's command runs where no credential and no write permission are held");
+  assert.deepEqual((called.jobs?.version as Job).permissions, { contents: "read" });
+});
+
+// The Release step is run as written, with the real script and a stub `gh`, so what is read is the argument list `gh release create` is given.
+function releaseCreate({ dir, lone, releaseFiles }: { dir: string; lone?: boolean; releaseFiles?: "none" | "empty" | "three" }): string {
+  const run = step("tag", /^A GitHub Release per tag/)?.run;
+  assert.ok(run, "positive control: the tag job has its Release step");
+  const sandbox = mkdtempSync(join(tmpdir(), "release-assets-"));
+  try {
+    mkdirSync(join(sandbox, "bin"));
+    mkdirSync(join(sandbox, "carry"));
+    mkdirSync(join(sandbox, ".release-tool", "scripts"), { recursive: true });
+    copyFileSync(new URL("./release-per-merge.ts", import.meta.url), join(sandbox, ".release-tool", "scripts", "release-per-merge.ts"));
+    declareModule(join(sandbox, ".release-tool"));
+    mkdirSync(join(sandbox, dir), { recursive: true });
+    writeFileSync(join(sandbox, dir, "CHANGELOG.md"), "# p\n\n## 1.0.0\n\nthe notes\n");
+    writeFileSync(join(sandbox, "bin", "gh"), '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
+    writeFileSync(join(sandbox, "carry", "release.json"), JSON.stringify({ packages: [{ tag: "t@1.0.0", dir, version: "1.0.0", ...(lone === undefined ? {} : { lone }) }] }));
+    const files = join(sandbox, "release-files");
+    if (releaseFiles === "empty") mkdirSync(join(files, "assets"), { recursive: true });
+    if (releaseFiles === "three") {
+      mkdirSync(join(files, "assets"), { recursive: true });
+      for (const file of ["SHA256SUMS", "b.tar.xz", "a.tar.xz"]) writeFileSync(join(files, "assets", file), file);
+      mkdirSync(join(files, "pins"));
+      writeFileSync(join(files, "pins", "pin-a.json"), "{}");
+    }
+    const output = execFileSync("bash", ["-eo", "pipefail", "-c", run], {
+      cwd: sandbox,
+      encoding: "utf8",
+      env: { PATH: `${join(sandbox, "bin")}:${process.env.PATH}`, RUNNER_TEMP: sandbox, GITHUB_STEP_SUMMARY: "/dev/null", GITHUB_SHA: "x", DIST_TAG: "preview", ...TYPE_STRIPPING_ENV, RELEASE_FILES_ARTIFACT: releaseFiles ? "release-files" : "" },
+    });
+    return (output.split("\n").find((line) => line.startsWith("release create")) ?? "").replaceAll(sandbox, "<sandbox>");
+  } finally {
+    rmSync(sandbox, { recursive: true });
+  }
+}
+
+test("the lone package's Release is created with every file of assets/ in the one call, and no pins or reports", () => {
+  const line = releaseCreate({ dir: "middleware", lone: true, releaseFiles: "three" });
+  assert.match(line, /^release create t@1\.0\.0 --verify-tag --title t@1\.0\.0 --notes-file <sandbox>\/notes\.md --latest=false <sandbox>\/release-files\/assets\/SHA256SUMS <sandbox>\/release-files\/assets\/a\.tar\.xz <sandbox>\/release-files\/assets\/b\.tar\.xz$/);
+  assert.match(releaseCreate({ dir: ".", lone: true, releaseFiles: "three" }), /release-files\/assets\/SHA256SUMS .*b\.tar\.xz$/, "a lone package at the root gets them too");
+});
+
+test("a package that is not the lone one gets no asset, and a caller that names no release-files attaches nothing", () => {
+  assert.doesNotMatch(releaseCreate({ dir: "packages/a", lone: false, releaseFiles: "three" }), /release-files/);
+  assert.doesNotMatch(releaseCreate({ dir: ".", lone: false, releaseFiles: "three" }), /release-files/, "the root is an ordinary package when the caller names another directory as the lone one");
+  assert.doesNotMatch(releaseCreate({ dir: "middleware", lone: true }), /release-files/);
+  assert.match(releaseCreate({ dir: "middleware", lone: true }), /--notes-file <sandbox>\/notes\.md --latest=false$/, "the call is the one it was");
+});
+
+test("a release-files artifact with nothing in assets/ fails the step before any Release is created", () => {
+  assert.throws(() => releaseCreate({ dir: "middleware", lone: true, releaseFiles: "empty" }), /holds no file/);
 });
