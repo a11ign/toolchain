@@ -91,8 +91,9 @@ jobs:
         # as it was when the run began: a `no-release:` line added since would not count, and the rerun would fail again for a reason already fixed. The
         # body is fetched as the file list is, and it reaches the script through `env` as before. It is assigned on its own line so that `bash -e` fails the step when
         # the API fails (`export PR_BODY="$(...)"` would hide the exit status), and `// ""` makes a pull request with no body an empty one, which is a real
-        # answer, where a failed read is no answer at all.
+        # answer, where a failed read is no answer at all. The filter drops the body's trailing CR/LF itself: `$(...)` strips only `\n`, so a body that ends in
+        # `\r\n` would keep a lone `\r` on its last line, and a `no-release:` line there would stop matching (it matched when the payload carried the body).
         run: |
-          PR_BODY="$(gh api "repos/$REPOSITORY/pulls/$NUMBER" --jq '.body // ""')"
+          PR_BODY="$(gh api "repos/$REPOSITORY/pulls/$NUMBER" --jq '(.body // "") | sub("[\\r\\n]+$"; "")')"
           export PR_BODY
           node .changeset-required-tool/scripts/changeset-required.ts | tee -a "$GITHUB_STEP_SUMMARY"

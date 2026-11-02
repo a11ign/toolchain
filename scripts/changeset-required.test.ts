@@ -254,7 +254,8 @@ test("the body is asked of the API, and the event payload's copy is passed nowhe
 // THE BODY STEP RUN AS THE RUNNER RUNS IT (A11-403): the step's own `run` text, under `bash -eo pipefail`, with a stand-in `gh` first on PATH. The stand-in answers
 // the body URL with a chosen body (or fails), and the real script then judges the real file list. A rerun's stale payload is what this replaces, so the body the
 // stand-in serves is the only body there is.
-function runBodyStep(files: File[], gh: string, env: Record<string, string> = {}) {
+function runBodyStep(files: File[], served: ReturnType<typeof SERVES_BODY> | string, env: Record<string, string> = {}) {
+  const { gh, json } = typeof served === "string" ? { gh: served, json: "{}" } : served;
   const dir = mkdtempSync(join(tmpdir(), "changeset-required-live-"));
   try {
     const tool = join(dir, ".changeset-required-tool", "scripts");
@@ -262,6 +263,7 @@ function runBodyStep(files: File[], gh: string, env: Record<string, string> = {}
     for (const name of ["changeset-required.ts", "node-with-types.ts"]) copyFileSync(join(ROOT, "scripts", name), join(tool, name));
     const bin = join(dir, "bin");
     mkdirSync(bin);
+    writeFileSync(join(dir, "body.json"), json);
     writeFileSync(join(bin, "gh"), `#!/bin/bash\n${gh}\n`, { mode: 0o755 });
     writeFileSync(join(dir, "files.jsonl"), files.map((file) => JSON.stringify(file)).join("\n"));
     const result = spawnSync("bash", ["-eo", "pipefail", "-c", scriptStep().run ?? "exit 99"], {
@@ -277,7 +279,8 @@ function runBodyStep(files: File[], gh: string, env: Record<string, string> = {}
     rmSync(dir, { recursive: true, force: true });
   }
 }
-const SERVES_BODY = (body: string) => `[ "$1 $2" = "api repos/a11ign/example/pulls/7" ] || exit 64\nprintf '%s' ${JSON.stringify(body)}`;
+// The stand-in answers the body URL by running the REAL jq filter it is given over {"body": ...}, so the filter itself is under test, not a re-statement of it.
+const SERVES_BODY = (body: string | null) => ({ json: JSON.stringify({ body }), gh: `[ "$1 $2 $3" = "api repos/a11ign/example/pulls/7 --jq" ] || exit 64\njq -r "$4" "$(dirname "$0")/../body.json"` });
 
 test("a body edited after the run began counts: the step judges the live body, not the payload's", () => {
   // The payload of the run says nothing (no PR_BODY is passed at all), and the API's body now carries the line a person added.
@@ -290,11 +293,24 @@ test("a body edited after the run began counts: the step judges the live body, n
 });
 
 test("a body that is null is an empty body, a real answer", () => {
-  // `// ""` in the --jq turns null into ""; the stand-in applies the same rule to a null it is asked about.
-  const result = runBodyStep(NUMBER_25, `[ "$1 $2 $3" = "api repos/a11ign/example/pulls/7 --jq" ] || exit 64\ncase "$4" in *'// ""'*) printf '';; *) printf 'null';; esac`);
+  const result = runBodyStep(NUMBER_25, SERVES_BODY(null));
   assert.equal(result.status, 1, result.out);
   assert.match(result.out, /VERDICT fail/);
-  assert.doesNotMatch(result.out, /VERDICT pass/);
+  assert.doesNotMatch(result.out, /null/, "the string null is not the body");
+});
+
+test("a body with CRLF line endings that ends in a no-release line counts, as it did when the payload carried the body", () => {
+  // `$(...)` strips only `\n`: without the filter's own trim the last line keeps a `\r` and the line no longer matches.
+  for (const body of ["intro\r\nno-release: docs only\r\n", "intro\r\nno-release: docs only\r\n\r\n", "intro\r\nno-release: docs only", "no-release: docs only\n\n"]) {
+    const result = runBodyStep(NUMBER_25, SERVES_BODY(body));
+    assert.equal(result.status, 0, `${JSON.stringify(body)}: ${result.out}`);
+  }
+});
+
+test("a body with shell metacharacters reaches the script as data", () => {
+  const result = runBodyStep(NUMBER_25, SERVES_BODY("$(touch pwned) `id` \\ \"quoted\"\nno-release: $HOME stays literal"));
+  assert.equal(result.status, 0, result.out);
+  assert.match(result.out, /\$HOME stays literal/);
 });
 
 test("a failed read of the body fails the step, and never reads as an empty body or a pass", () => {
