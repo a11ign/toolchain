@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -235,12 +235,92 @@ test("a merge_group entry runs the one explanation step and no step that needs a
   assert.equal(running.length, 1);
 });
 
-test("the pull request's body and the paths reach the script through env, never interpolated into a shell line", () => {
-  const steps = stepsOf(load(REUSABLE));
-  for (const step of steps) assert.doesNotMatch(step.run ?? "", /\$\{\{/, step.name ?? "unnamed step");
-  const script = steps.find((step) => /changeset-required\.ts/.test(step.run ?? ""));
-  assert.match(script?.env?.PR_BODY ?? "", /github\.event\.pull_request\.body/);
-  assert.match(script?.env?.RELEASABLE_PATHS ?? "", /inputs\.releasable-paths/);
+const scriptStep = (): Step => stepsOf(load(REUSABLE)).find((step) => /changeset-required\.ts/.test(step.run ?? "")) ?? {};
+
+test("the paths reach the script through env, never interpolated into a shell line", () => {
+  for (const step of stepsOf(load(REUSABLE))) assert.doesNotMatch(step.run ?? "", /\$\{\{/, step.name ?? "unnamed step");
+  assert.match(scriptStep().env?.RELEASABLE_PATHS ?? "", /inputs\.releasable-paths/);
+});
+
+test("the body is asked of the API, and the event payload's copy is passed nowhere", () => {
+  // A11-403: a rerun replays the event payload, so the payload's body is stale on a rerun.
+  const { env = {}, run = "" } = scriptStep();
+  assert.equal(env.PR_BODY, undefined, "the event payload's body is not passed to the script");
+  for (const [name, value] of Object.entries(env)) assert.doesNotMatch(value, /pull_request\.body/, name);
+  assert.match(run, /gh api .*pulls\/\$NUMBER/);
+  assert.match(env.GH_TOKEN ?? "", /github\.token/);
+});
+
+// THE BODY STEP RUN AS THE RUNNER RUNS IT (A11-403): the step's own `run` text, under `bash -eo pipefail`, with a stand-in `gh` first on PATH. The stand-in answers
+// the body URL with a chosen body (or fails), and the real script then judges the real file list. A rerun's stale payload is what this replaces, so the body the
+// stand-in serves is the only body there is.
+function runBodyStep(files: File[], served: ReturnType<typeof SERVES_BODY> | string, env: Record<string, string> = {}) {
+  const { gh, json } = typeof served === "string" ? { gh: served, json: "{}" } : served;
+  const dir = mkdtempSync(join(tmpdir(), "changeset-required-live-"));
+  try {
+    const tool = join(dir, ".changeset-required-tool", "scripts");
+    mkdirSync(tool, { recursive: true });
+    for (const name of ["changeset-required.ts", "node-with-types.ts"]) copyFileSync(join(ROOT, "scripts", name), join(tool, name));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(dir, "body.json"), json);
+    writeFileSync(join(bin, "gh"), `#!/bin/bash\n${gh}\n`, { mode: 0o755 });
+    writeFileSync(join(dir, "files.jsonl"), files.map((file) => JSON.stringify(file)).join("\n"));
+    const result = spawnSync("bash", ["-eo", "pipefail", "-c", scriptStep().run ?? "exit 99"], {
+      cwd: dir,
+      encoding: "utf8",
+      env: {
+        PATH: `${bin}:${process.env.PATH ?? ""}`, ...TYPE_STRIPPING_ENV, REPOSITORY: "a11ign/example", NUMBER: "7", GH_TOKEN: "t",
+        FILES_JSONL: join(dir, "files.jsonl"), RELEASABLE_PATHS: WORKER, GITHUB_STEP_SUMMARY: join(dir, "summary.md"), ...env,
+      },
+    });
+    return { status: result.status, out: result.stdout + result.stderr };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+// The stand-in answers the body URL by running the REAL jq filter it is given over {"body": ...}, so the filter itself is under test, not a re-statement of it.
+const SERVES_BODY = (body: string | null) => ({ json: JSON.stringify({ body }), gh: `[ "$1 $2 $3" = "api repos/a11ign/example/pulls/7 --jq" ] || exit 64\njq -r "$4" "$(dirname "$0")/../body.json"` });
+
+test("a body edited after the run began counts: the step judges the live body, not the payload's", () => {
+  // The payload of the run says nothing (no PR_BODY is passed at all), and the API's body now carries the line a person added.
+  const passing = runBodyStep(NUMBER_25, SERVES_BODY("no-release: docs only"));
+  assert.equal(passing.status, 0, passing.out);
+  assert.match(passing.out, /VERDICT pass/);
+  const failing = runBodyStep(NUMBER_25, SERVES_BODY("nothing about releasing"));
+  assert.equal(failing.status, 1, failing.out);
+  assert.match(failing.out, /VERDICT fail/);
+});
+
+test("a body that is null is an empty body, a real answer", () => {
+  const result = runBodyStep(NUMBER_25, SERVES_BODY(null));
+  assert.equal(result.status, 1, result.out);
+  assert.match(result.out, /VERDICT fail/);
+  assert.doesNotMatch(result.out, /null/, "the string null is not the body");
+});
+
+test("a body with CRLF line endings that ends in a no-release line counts, as it did when the payload carried the body", () => {
+  // `$(...)` strips only `\n`: without the filter's own trim the last line keeps a `\r` and the line no longer matches.
+  for (const body of ["intro\r\nno-release: docs only\r\n", "intro\r\nno-release: docs only\r\n\r\n", "intro\r\nno-release: docs only", "no-release: docs only\n\n"]) {
+    const result = runBodyStep(NUMBER_25, SERVES_BODY(body));
+    assert.equal(result.status, 0, `${JSON.stringify(body)}: ${result.out}`);
+  }
+});
+
+test("a body with shell metacharacters reaches the script as data", () => {
+  const result = runBodyStep(NUMBER_25, SERVES_BODY("$(touch pwned) `id` \\ \"quoted\"\nno-release: $HOME stays literal"));
+  assert.equal(result.status, 0, result.out);
+  assert.match(result.out, /\$HOME stays literal/);
+});
+
+test("a failed read of the body fails the step, and never reads as an empty body or a pass", () => {
+  const result = runBodyStep(NUMBER_25, `echo "gh: HTTP 502" >&2\nexit 1`);
+  assert.notEqual(result.status, 0, result.out);
+  assert.doesNotMatch(result.out, /VERDICT/, "the script never ran on a body it did not read");
+  // And with a file list that needs no changeset, an unread body would pass if it were read as empty: it must still fail.
+  const harmless = runBodyStep(added("docs/a.md"), `echo "gh: HTTP 502" >&2\nexit 1`);
+  assert.notEqual(harmless.status, 0, harmless.out);
+  assert.doesNotMatch(harmless.out, /VERDICT pass/);
 });
 
 test("the script is fetched at the commit the workflow was read from, and the caller's code is never run", () => {

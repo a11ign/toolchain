@@ -33,7 +33,8 @@
 # A CALLER PINS THIS FILE BY FULL SHA, as it pins `release-per-merge.yml`, and its Dependabot `github-actions` entry moves the pin. The script is
 # fetched at `job.workflow_sha`, the commit this file was read from, so the pin selects both. THE CALLER'S CODE IS NEVER CHECKED OUT OR RUN: this job
 # reads the pull request through the API and runs one script of ours, so it holds `pull-requests: read` and `contents: read` and no more. The body
-# and the paths reach the script through `env`, never interpolated into a shell line: a body is whatever its author typed.
+# and the paths reach the script through `env`, never interpolated into a shell line: a body is whatever its author typed. THE BODY IS FETCHED LIVE (A11-403):
+# a rerun replays the event payload, so a caller that reruns after a `no-release:` line was added to the body would otherwise judge the old body again.
 name: changeset-required
 
 on:
@@ -81,7 +82,18 @@ jobs:
         if: github.event_name != 'merge_group' && github.event_name != 'push'
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
           FILES_JSONL: ${{ runner.temp }}/files.jsonl
-          PR_BODY: ${{ github.event.pull_request.body }}
           RELEASABLE_PATHS: ${{ inputs.releasable-paths }}
-        run: node .changeset-required-tool/scripts/changeset-required.ts | tee -a "$GITHUB_STEP_SUMMARY"
+        # THE BODY IS READ LIVE, NOT FROM THE EVENT (A11-403). A rerun replays the event payload it started with, so `github.event.pull_request.body` is the body
+        # as it was when the run began: a `no-release:` line added since would not count, and the rerun would fail again for a reason already fixed. The
+        # body is fetched as the file list is, and it reaches the script through `env` as before. It is assigned on its own line so that `bash -e` fails the step when
+        # the API fails (`export PR_BODY="$(...)"` would hide the exit status), and `// ""` makes a pull request with no body an empty one, which is a real
+        # answer, where a failed read is no answer at all. The filter drops the body's trailing CR/LF itself: `$(...)` strips only `\n`, so a body that ends in
+        # `\r\n` would keep a lone `\r` on its last line, and a `no-release:` line there would stop matching (it matched when the payload carried the body).
+        run: |
+          PR_BODY="$(gh api "repos/$REPOSITORY/pulls/$NUMBER" --jq '(.body // "") | sub("[\\r\\n]+$"; "")')"
+          export PR_BODY
+          node .changeset-required-tool/scripts/changeset-required.ts | tee -a "$GITHUB_STEP_SUMMARY"
